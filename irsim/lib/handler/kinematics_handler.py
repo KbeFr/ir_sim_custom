@@ -289,7 +289,6 @@ class AckermannKinematics(KinematicsHandler):
             self.wheelbase,
         )
 
-
 class KinematicsFactory:
     """
     Factory class to create kinematics handlers.

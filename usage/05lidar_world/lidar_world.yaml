@@ -32,6 +32,9 @@ obstacle:
   - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
     state: [5, 5, 0]
     unobstructed: True
+  - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
+    state: [10, 10, 0]
+
   
   - shape: {name: 'rectangle', length: 1.5, width: 1.2}  # length, width
     state: [6, 5, 1] 

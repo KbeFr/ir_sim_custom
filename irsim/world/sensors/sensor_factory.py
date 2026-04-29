@@ -2,7 +2,10 @@ from typing import Any
 
 import numpy as np
 
-from irsim.world.sensors.lidar2d import Lidar2D
+from irsim.world.sensors.lidar2d import Lidar2D 
+from irsim.world.sensors.camera_uav import CameraUAV 
+from irsim.world.sensors.camera_ugv import CameraUGV 
+
 
 
 class SensorFactory:
@@ -24,4 +27,10 @@ class SensorFactory:
 
         if sensor_type == "lidar2d":
             return Lidar2D(state, obj_id, **kwargs)
+        elif sensor_type == "camerauav":
+            return CameraUAV(state, obj_id, **kwargs)
+        elif sensor_type == "cameraugv":
+            return CameraUGV(state, obj_id, **kwargs)
+
+
         raise NotImplementedError(f"Sensor types {type} not implemented")

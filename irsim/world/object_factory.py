@@ -11,6 +11,11 @@ from irsim.util.util import (
 from irsim.world.map.obstacle_map import ObstacleMap
 from irsim.world.object_base import ObjectBase
 
+from irsim.world.robots.ugv_twin import UGVTwin
+from irsim.world.robots.uav_twin import UAVTwin
+
+
+
 # Keep backward-compatible imports so existing code can still reach these
 # via ``from irsim.world.object_factory import RobotDiff`` etc.
 from irsim.world.obstacles.obstacle_acker import ObstacleAcker  # noqa: F401
@@ -149,14 +154,20 @@ class ObjectFactory:
             obj_dict["sensors"] = convert_list_length_dict(sensors, number)[i]
 
             if obj_type == "robot":
-                object_list.append(self.create_robot(**obj_dict))
+                object_list.append(self.create_robot("robot" , **obj_dict))
             elif obj_type == "obstacle":
                 object_list.append(self.create_obstacle(**obj_dict))
+            elif obj_type == "uav":
+                object_list.append(self.create_robot("uav", **obj_dict, ))
+            elif obj_type == "ugv":
+                object_list.append(self.create_robot("ugv",**obj_dict ))
+
+
 
         return object_list
 
     def create_robot(
-        self, kinematics: dict[str, Any] | None = None, **kwargs: Any
+        self, type : str ,kinematics: dict[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         """
         Create a robot based on kinematics.
@@ -191,7 +202,17 @@ class ObjectFactory:
         if handler_cls.description is not None:
             kwargs.setdefault("description", handler_cls.description)
 
-        return ObjectBase(kinematics=kinematics, role="robot", **kwargs)
+
+        if type == "uav":
+            print("UAV Created")
+            return UAVTwin(kinematics=kinematics, role="robot", **kwargs)
+        elif type == "ugv":
+            print("UGV Created")
+            return UGVTwin(kinematics=kinematics, role="robot", **kwargs)
+        else:
+            print("ROBOT Created")
+            return ObjectBase(kinematics=kinematics, role="robot", **kwargs)
+
 
     def create_obstacle(
         self, kinematics: dict[str, Any] | None = None, **kwargs: Any

@@ -1,0 +1,114 @@
+world:
+  height: 40  # the height of the world
+  width: 40   # the width of the world
+  step_time: 0.1  # 10Hz calculate each step
+  sample_time: 0.1  # 10 Hz for render and data extraction 
+  offset: [0, 0] # the offset of the world on x and y 
+  collision_mode: 'unobstructed'  # 'stop', 'unobstructed', 'unobstructed_obstacles'
+  control_mode: 'auto'  # 'keyboard', 'auto'
+
+uav:
+  - kinematics: {name: 'omni'}  # omni, diff, acker
+    shape: {name: 'circle', radius: 0.2}  # radius
+    # shape: {name: 'rectangle', length: 0.5, width: 0.2}  # radius
+    state: [20, 20, 1.57079632679]  
+    goal: [20, 20, 0] 
+    # acce: [3, .inf]   # acce of [linear, angular]  or [v_x, v_y] or [linear, steer]
+    sensors:
+      - name: 'camerauav'
+        length : 18
+        width : 32
+        noise: False
+        std: 0.2
+        angle_std: 0.2
+        offset: [0.0, 0.0, 0.0]
+        alpha: 0.3
+
+
+ugv:
+  - kinematics: {name: 'diff'}  # omni, diff, acker
+    shape: {name: 'circle', radius: 0.2}  # radius
+    # shape: {name: 'rectangle', length: 0.5, width: 0.2}  # radius
+    state: [18, 10, 0]  
+    goal: [10, 35, 0]
+    vel_min: [0.0, -1.5]
+    vel_max: [0.8, 1.5]
+    goal_threshold: 2
+
+    plot:
+      show_trajectory: true
+      show_goal: true
+      show_goal_text: true
+      show_text: true
+
+    # acce: [3, .inf]   # acce of [linear, angular]  or [v_x, v_y] or [linear, steer]
+
+    sensors:
+      - name: 'cameraugv'
+        max_range: 7
+        fov_angle: 1
+        noise: False
+        std: 0.2
+        angle_std: 0.2
+        offset: [0.1, 0.1, 0.0]
+        alpha: 0.3
+
+
+
+
+
+obstacle:
+  - shape: {name: 'rectangle', length: 1.5, width: 1.2}  # length, width
+    state: [30, 15 , 1] 
+
+  - shape: {name: 'rectangle', length: 1, width: 2}  # length, width
+    state: [25, 25 , 1] 
+
+  - shape: {name: 'rectangle', length: 1, width: 1}  # length, width
+    state: [15, 22 , 0.2] 
+
+  - shape: {name: 'rectangle', length: 1, width: 3}  # length, width
+    state: [10, 15 , 0] 
+
+  - shape: {name: 'rectangle', length: 2, width: 2}  # length, width
+    state: [14, 10 , 1.2] 
+
+  - shape: {name: 'rectangle', length: 5, width: 2}  # length, width
+    state: [20, 15 , 0.6] 
+
+  - shape: {name: 'rectangle', length: 1, width: 2}  # length, width
+    state: [25, 18 , 0.6] 
+
+  - shape: {name: 'rectangle', length: 4, width: 3}  # length, width
+    state: [15, 18 , 0.2] 
+  
+  - shape: {name: 'rectangle', length: 4, width: 3}  # length, width
+    state: [10, 24 , 0.2] 
+
+
+  - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
+    state: [14, 26, 0]
+
+
+  - kinematics: {name: "omni"}
+    behavior: {name: "dash"}
+    shape: {name: "circle", radius: 0.55}
+    state: [18, 24, 0.0]
+    goal: [24, 21, 0.0]
+    vel_min: [-0.35, -0.35]
+    vel_max: [0.35, 0.35]
+    goal_threshold: 0.15
+    color: "black"
+
+
+
+
+  - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
+    state: [1, 1, 0]
+  - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
+    state: [39, 39, 0]
+  - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
+    state: [39 , 1, 0]
+  - shape: {name: 'circle', radius: 1.0, center: [1, 1]}  # radius
+    state: [1, 39, 0]
+

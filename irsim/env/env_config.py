@@ -56,6 +56,8 @@ class EnvConfig:
             "world": {},
             "gui": {},
             "robot": None,
+            "uav" : None,
+            "ugv" : None,
             "obstacle": None,
         }
 
@@ -108,9 +110,19 @@ class EnvConfig:
             **self._world_kwargs(),
         )
 
-        robot_collection = self.object_factory.create_from_parse(
-            self.parse["robot"], "robot"
-        )
+        robot_collection = []
+        group_start = 0
+        
+        # Aggregate any definitions under robot, uav, and ugv keys
+        for r_type in ["robot", "uav", "ugv"]:
+            parsed_data = self.parse.get(r_type)
+            if parsed_data is not None:
+                new_bots = self.object_factory.create_from_parse(
+                    parsed_data, r_type, group_start_index=group_start
+                )
+                robot_collection.extend(new_bots)
+                group_start = max((obj.group for obj in robot_collection), default=-1) + 1
+
         obstacle_collection = self.object_factory.create_from_parse(
             self.parse["obstacle"],
             "obstacle",
@@ -169,9 +181,19 @@ class EnvConfig:
             **self._world_kwargs(),
         )
 
-        robot_collection = self.object_factory.create_from_parse(
-            self.parse["robot"], "robot"
-        )
+        robot_collection = []
+        group_start = 0
+        
+        # Aggregate any definitions under robot, uav, and ugv keys
+        for r_type in ["robot", "uav", "ugv"]:
+            parsed_data = self.parse.get(r_type)
+            if parsed_data is not None:
+                new_bots = self.object_factory.create_from_parse(
+                    parsed_data, r_type, group_start_index=group_start
+                )
+                robot_collection.extend(new_bots)
+                group_start = max((obj.group for obj in robot_collection), default=-1) + 1
+
         obstacle_collection = self.object_factory.create_from_parse(
             self.parse["obstacle"],
             "obstacle",
