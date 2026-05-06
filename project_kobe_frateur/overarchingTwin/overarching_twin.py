@@ -1,7 +1,6 @@
 from __future__ import annotations
-
+from enum import Enum
 import math
-
 import numpy as np
 
 from irsim.world.robots.uav_twin import UAVTwin
@@ -18,6 +17,18 @@ Mission , POSTURE_WEIGHTS ,DEFAULT_POSTURE)
 from mission_logger import MissionLogger
 from metrics_logger import MetricsLogger
 from a_star_custom import AStarPlanner
+
+
+class PerceptionMode(Enum):
+    ALL = 1
+    UGV = 2
+    UAV = 3
+    MERGED = 4
+    
+    @classmethod
+    def get_names(cls):
+        return [member.name for member in cls]
+
 
 
 class OverArchingTwin:
@@ -55,6 +66,12 @@ class OverArchingTwin:
         self.uav_fleet = UAVFleetDT(uav)
         self._ugvs: list[UGVTwin] = ugv if isinstance(ugv, list) else [ugv]
         self.ugv = self._ugvs[0]
+
+        # --- Define innit obastacles view 
+        self.perception_mode : PerceptionMode = PerceptionMode.ALL
+        self.percieved_obstacles = None
+        
+
 
         # ---  global grid map + cost map 
         self.grid_map = GlobalGridMap(
@@ -102,6 +119,9 @@ class OverArchingTwin:
         # --- Cached path for dynamic-obstacle replan check
         self._active_paths: dict[str, np.ndarray] = {}
         self._replan_log:   list[dict]             = []
+
+    def set_perception_mode(self):
+        pass
 
 
 

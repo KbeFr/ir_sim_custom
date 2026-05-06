@@ -1,4 +1,5 @@
-# custom_world.py
+import matplotlib
+matplotlib.use("QtAgg")
 import irsim
 
 from overarchingTwin.overarching_twin import OverArchingTwin
@@ -10,6 +11,8 @@ from local_planners.c3bf_qp import CollisionConeCBFController
 from local_planners.cbf_qp import CBFQPController
 from local_planners.local_planners import PurePursuitController
 from mission_logger import MissionLogger
+
+from simulation_gui import launch
 
 # ---  Config 
 CONTROLLER       = "c3bf"          # "c3bf" | "cbf" | "pure_pursuit"
@@ -82,47 +85,24 @@ if USE_GLOBAL_PLAN:
     adt.add_mission(mission=mission)
 
 
-# Simulation loop 
-for step_i in range(MAX_STEPS):
+launch(
+    env             = env,
+    adt             = adt,
+    ugv_twins       = ugv_twins,
+    controllers     = controllers,
+    uav_twins       = uav_twins,
+    max_steps       = MAX_STEPS,
+    step_ms         = 100,           # 10 Hz — use the Speed slider to go faster
+    perception_mode = PERCEPTION_MODE,
+)
 
-    # OverArchingTwin step
-    adt.step()
-
-    # Per-UGV local control
-    actions = []
-    ids     = []
-
-    for ugv in ugv_twins:
-
-        #Dont advance the ugv if no mission is assigned to it
-        if USE_GLOBAL_PLAN and ugv.assigned_mission is None:
-            continue
-
-        # Get obstacles in UGV sensor view for controller
-        obstacles = ugv.get_ugv_view()
-
-        # Get safe velocity command from the local controller
-        ctrl    = controllers[ugv.id]
-        action  = ctrl.get_action(ugv, obstacles)
-
-        actions.append(action)
-        ids.append(ugv.id)
-
-    # Advance physics
-    env.step(action=actions, action_id=ids)
-    env.render(0.01)
-
-    if env.done():
-        print(f"[Sim] Done at step {step_i + 1}")
-        break
 
 # End of simulation 
 
-
+"""
 mission_logger.draw_mission_costs(adt)
 
 for ugv_id , metric_logger in adt._loggers.items():
     metric_logger.plot_figures()
+"""
 
-
-env.end(3)

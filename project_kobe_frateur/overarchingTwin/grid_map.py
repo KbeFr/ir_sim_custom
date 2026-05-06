@@ -231,6 +231,8 @@ class GlobalGridMap:
             self._oy + (gy + 0.5) * self.res,
         )
 
+
+
     # --- Private helpers 
 
     def _rasterise(self) -> np.ndarray:

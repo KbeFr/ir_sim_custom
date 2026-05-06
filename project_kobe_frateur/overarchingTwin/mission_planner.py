@@ -87,8 +87,6 @@ class MissionPlanner:
                     f"Lenght : {len(path[0])}   "
                     f"{(time.perf_counter() - t0) * 1000:.0f} ms"
                 )
-
-
                 
                 if self._check_battery(ugv, path):
                     C[i, j] = cost                    
