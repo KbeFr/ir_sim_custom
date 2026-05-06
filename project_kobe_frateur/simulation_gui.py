@@ -21,8 +21,9 @@ matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from overarchingTwin.overarching_twin import PerceptionMode
 
+from overarchingTwin.overarching_twin import PerceptionMode
+from overarchingTwin.mission import MissionPosture
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -308,10 +309,10 @@ class SimulationGUI(QMainWindow):
         grp  = QGroupBox("New Mission")
         form = QFormLayout(grp)
 
-        self.mission_id_edit = QLineEdit("mission_1")
+        self.mission_id_edit = QLineEdit("1")
 
         self.mission_type_combo = QComboBox()
-        self.mission_type_combo.addItems([m.name for m in MissionType])
+        self.mission_type_combo.addItems(MissionType.get_names())
 
         self.goal_x_spin = QDoubleSpinBox()
         self.goal_x_spin.setRange(-500, 500)
@@ -324,7 +325,7 @@ class SimulationGUI(QMainWindow):
         self.goal_y_spin.setSingleStep(0.5)
 
         self.posture_combo = QComboBox()
-        self.posture_combo.addItems(["EXPLORE", "DEFEND", "ATTACK"])
+        self.posture_combo.addItems(MissionPosture.get_names())
 
         form.addRow("Mission ID:",  self.mission_id_edit)
         form.addRow("Type:",        self.mission_type_combo)
@@ -378,29 +379,26 @@ class SimulationGUI(QMainWindow):
         cmap_vbox.addWidget(self.cmap_combo)
         layout.addWidget(grp_cmap)
 
-        # ── UGV posture weights (for cost maps) ───────────────────────────
-        grp_w   = QGroupBox("Cost map — UGV params")
-        w_form  = QFormLayout(grp_w)
-        self.cost_mass_spin    = QDoubleSpinBox(); self.cost_mass_spin.setRange(0.1, 200); self.cost_mass_spin.setValue(20.0)
-        self.cost_speed_spin   = QDoubleSpinBox(); self.cost_speed_spin.setRange(0.01, 10); self.cost_speed_spin.setValue(1.0)
-        self.cost_anc_spin     = QDoubleSpinBox(); self.cost_anc_spin.setRange(0, 100); self.cost_anc_spin.setValue(0.0)
-        self.posture_map_combo = QComboBox(); self.posture_map_combo.addItems(["EXPLORE", "DEFEND", "ATTACK"])
-        w_form.addRow("Mass [kg]:",    self.cost_mass_spin)
-        w_form.addRow("Avg speed:",    self.cost_speed_spin)
-        w_form.addRow("Anc. drain:",   self.cost_anc_spin)
-        w_form.addRow("Posture:",      self.posture_map_combo)
-        layout.addWidget(grp_w)
-
         # ── Overlay on sim ─────────────────────────────────────────────────
-        self.chk_overlay = QCheckBox("Overlay on simulation view (α=0.35)")
+
+        grp_ovrl  = QGroupBox("Overlay on simulation view")
+        ovrl_vbox = QFormLayout(grp_ovrl)
+        self.chk_overlay = QCheckBox("Show overlay on simulation view")
+        self.chk_overlay.setChecked(False)
         self.chk_overlay.toggled.connect(self._on_overlay_toggle)
-        layout.addWidget(self.chk_overlay)
+        self.alpha_overlay    = QDoubleSpinBox(); self.alpha_overlay.setRange(0.1, 1); self.alpha_overlay.setValue(0.3)
+        self.alpha_overlay.setSingleStep(0.05)
+        ovrl_vbox.addRow(self.chk_overlay)
+        ovrl_vbox.addRow("Overlay alpha:",    self.alpha_overlay)
+        layout.addWidget(grp_ovrl)
 
+        
         # ── Auto-refresh on sim step ───────────────────────────────────────
-        self.chk_map_autorefresh = QCheckBox("Auto-refresh every N steps")
+        grp_rfrs  = QGroupBox("Auto-refresh")
+        rfrs_vbox = QFormLayout(grp_rfrs)
+        self.chk_map_autorefresh = QCheckBox("Enable Auto-refresh")
         self.chk_map_autorefresh.setChecked(False)
-        layout.addWidget(self.chk_map_autorefresh)
-
+        rfrs_vbox.addRow(self.chk_map_autorefresh)
         self.map_refresh_spin = QSpinBox()
         self.map_refresh_spin.setRange(1, 200)
         self.map_refresh_spin.setValue(20)
@@ -408,7 +406,8 @@ class SimulationGUI(QMainWindow):
         row.addWidget(QLabel("Refresh every:"))
         row.addWidget(self.map_refresh_spin)
         row.addWidget(QLabel("steps"))
-        layout.addLayout(row)
+        rfrs_vbox.addRow(row)
+        layout.addWidget(grp_rfrs)
 
         # ── Manual render button ───────────────────────────────────────────
         btn_render = QPushButton("🖼  Render selected layer")
@@ -614,8 +613,9 @@ class SimulationGUI(QMainWindow):
             ml = getattr(mp, 'mission_logger', None)
         cmap = self.cmap_combo.currentText()
 
-        self._map_ax.clear()
-
+        self._map_fig.clear()   # Clear the whole figure
+        self._map_ax = self._map_fig.add_subplot(111) # Recreate a fresh, full-size axes
+        
         try:
             if kind == "occ" and gm is not None:
                 grid   = gm._occ
@@ -644,16 +644,19 @@ class SimulationGUI(QMainWindow):
                     (m for m in self.adt.missions if m.mission_id == mission_id), None
                 )
                 # Get posture from this mission 
-                posture  = (mission.mission_posture
-                            if mission else self.posture_map_combo.currentText())
+                posture  = (mission.mission_posture)
                 weights  = POSTURE_WEIGHTS[posture]
+
+                # Safely find the corresponding UGV object in the OverArchingTwin
+                ugv = next((u for u in self.adt._ugvs if getattr(u, 'id', str(id(u))) == ugv_id), None)
+
 
                 cost_img = gm.get_cost_image(
                     weights   = weights,
-                    robot_mass= self.cost_mass_spin.value(),
-                    v_avg     = self.cost_speed_spin.value(),
-                    Ka        = self.cost_anc_spin.value(),
-                )
+                    robot_mass= ugv.mass,
+                    v_avg     = ugv.avg_speed,
+                    Ka        = ugv.ancillary_drain)
+                
                 extent = self._get_grid_extent(gm)
                 im = self._map_ax.imshow(
                     cost_img.T, origin='lower', extent=extent,
@@ -700,60 +703,84 @@ class SimulationGUI(QMainWindow):
 
     def _on_overlay_toggle(self, checked: bool):
         self._overlay_active = checked
-        if not checked and self._overlay_im is not None:
-            self._overlay_im.remove()
-            self._overlay_im = None
+        if not checked and hasattr(self, '_overlay_elements'):
+            for item in self._overlay_elements:
+                try:
+                    item.remove()
+                except Exception:
+                    pass
+            self._overlay_elements = []
             self.canvas.draw_idle()
         elif checked:
-            self._render_map_layer()   # immediately update
+            self._render_map_layer()
 
     def _draw_overlay(self, kind, mission_id, ugv_id):
-        """Draw a semi-transparent imshow on the *sim* canvas axes."""
-        gm  = getattr(self.adt, 'grid_map', None)
-        ml  = getattr(self.adt, 'mission_logger', None)
-        ax  = self.env._env_plot.ax
+        gm = getattr(self.adt, 'grid_map', None)
+        mp = getattr(self.adt, 'mission_planner', None)
+        ml = getattr(mp, 'mission_logger', None) if mp else None
+        ax = self.env._env_plot.ax # Simulation axes
 
-        if self._overlay_im is not None:
-            try:
-                self._overlay_im.remove()
-            except Exception:
-                pass
-            self._overlay_im = None
+        # 1. Clear previous elements
+        if hasattr(self, '_overlay_elements'):
+            for item in self._overlay_elements:
+                try:
+                    item.remove()
+                except: pass
+        self._overlay_elements = []
 
         try:
             extent = self._get_grid_extent(gm)
-            cmap   = self.cmap_combo.currentText()
+            alpha_val = self.alpha_overlay.value()
+            
+            # --- PART 1: DRAW THE MAP ---
+            img_data = None
+            if kind == "occ":
+                img_data = gm._occ.T
+            elif kind == "risk":
+                img_data = gm._risk.T
+            elif kind == "cost":
+                mission = next((m for m in self.adt.missions if m.mission_id == mission_id), None)
+                # FIX: Ensure mission_posture is handled if it's an Enum
+                from overarchingTwin.mission import POSTURE_WEIGHTS, MissionPosture
+                posture = mission.mission_posture
+                
+                weights = POSTURE_WEIGHTS[posture]
+                ugv = next((u for u in self.adt._ugvs if getattr(u, 'id', None) == ugv_id), None)
+                
+                if ugv:
+                    img_data = gm.get_cost_image(weights=weights, robot_mass=ugv.mass, 
+                                               v_avg=ugv.avg_speed, Ka=ugv.ancillary_drain).T
 
-            if kind == "occ" and gm is not None:
-                grid = gm._occ
-                self._overlay_im = ax.imshow(
-                    grid.T, origin='lower', extent=extent,
-                    cmap='gray_r', vmin=0, vmax=100, alpha=0.35, zorder=2,
-                )
-            elif kind == "risk" and gm is not None:
-                self._overlay_im = ax.imshow(
-                    gm._risk.T, origin='lower', extent=extent,
-                    cmap=cmap, alpha=0.35, zorder=2,
-                )
-            elif kind == "cost" and gm is not None:
-                from overarchingTwin.mission import POSTURE_WEIGHTS
-                mission = next(
-                    (m for m in self.adt.missions if m.mission_id == mission_id), None
-                )
-                posture = (mission.mission_posture
-                           if mission else self.posture_map_combo.currentText())
-                cost_img = gm.env_map.get_cost_image(
-                    weights=POSTURE_WEIGHTS[posture],
-                    robot_mass=self.cost_mass_spin.value(),
-                    v_avg=self.cost_speed_spin.value(),
-                    Ka=self.cost_anc_spin.value(),
-                )
-                self._overlay_im = ax.imshow(
-                    cost_img.T, origin='lower', extent=extent,
-                    cmap=cmap, vmin=0, vmax=1, alpha=0.35, zorder=2,
-                )
+            if img_data is not None:
+                im = ax.imshow(img_data, origin='lower', extent=extent,
+                               cmap=self.cmap_combo.currentText(), 
+                               alpha=alpha_val, zorder=2) # Base layer
+                self._overlay_elements.append(im)
+
+            # --- PART 2: DRAW THE PATH ---
+            if ml is not None and mission_id in ml._per_mission_log:
+                logs = ml._per_mission_log[mission_id]
+                for entry in logs:
+                    # DEBUG: Print to console to see if IDs actually match
+                    # print(f"Checking Logger ID: {entry['id']} (type {type(entry['id'])}) vs Target ID: {ugv_id} (type {type(ugv_id)})")
+                    
+                    if str(entry['id']) == str(ugv_id): # Force string comparison to be safe
+                        path = entry.get('path')
+                        if path is not None and hasattr(path, 'ndim') and path.ndim == 2:
+                            # Use high Z-ORDER to ensure it's on top of everything
+                            ln, = ax.plot(path[0], path[1], color='cyan', lw=2.5, zorder=10, label="Overlay Path")
+                            g_dot, = ax.plot(path[0][-1], path[1][-1], 'go', ms=8, zorder=11)
+                            s_x, = ax.plot(path[0][0], path[1][0], 'rx', ms=10, zorder=11)
+                            
+                            self._overlay_elements.extend([ln, g_dot, s_x])
+                            # print(f"Successfully drew path for UGV {ugv_id}")
+                        break
+
             self.canvas.draw_idle()
+
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self._log(f"[Overlay error] {e}")
 
     # ══════════════════════════════════════════════════════════════════════

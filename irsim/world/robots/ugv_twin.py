@@ -99,14 +99,6 @@ class UGVTwin(ObjectBase):
                 - Omnidirectional: [velocity_x, velocity_y]
                 - Ackermann: [linear_velocity, steering_angle]
         
-        
-        
-        
-        
         """
-
-
-
-
         # Execute standard physics/kinematics step
         return super().step(velocity=velocity, sensor_step=sensor_step, **kwargs)

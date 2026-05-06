@@ -18,6 +18,17 @@ from typing import Any
 # Posture weight presets  (Table 1 in thesis)
 # ══════════════════════════════════════════════════════════════════════════════
 
+class MissionPosture(Enum):
+    EXPLORE = 1
+    CONSERVE = 2
+    URGENT = 3
+    SAFE = 4
+    
+    @classmethod
+    def get_names(cls):
+        return [member.name for member in cls]
+
+
 POSTURE_WEIGHTS: dict[str, tuple] = {
     #                   Wd    We    Wt    Wu    Wr
     "EXPLORE":        (1  , 1 ,  0.5,  5,  2),
@@ -26,7 +37,7 @@ POSTURE_WEIGHTS: dict[str, tuple] = {
     "SAFE":           (1.0,  1.0,  1.0,  1.0,  8.0),
 }
 
-DEFAULT_POSTURE = "EXPLORE"
+DEFAULT_POSTURE = MissionPosture.EXPLORE
 
 
 
@@ -39,6 +50,10 @@ class MissionType(Enum):
     TRACK_TARGET     = auto()   # intercept / follow a moving object by ir-sim id
     COVERAGE_PATROL  = auto()   # visit an ordered list of (x, y) waypoints
     TIME_GATED_GOTO  = auto()   # waypoint becomes available at sim time T
+    
+    @classmethod
+    def get_names(cls):
+        return [member.name for member in cls]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -67,7 +82,7 @@ class Mission:
     mission_id:     str
     mission_type:   MissionType
 
-    mission_posture: str
+    mission_posture: MissionPosture
 
     # GOTO / TIME_GATED
     goal_xy:        tuple[float, float] | None = None
