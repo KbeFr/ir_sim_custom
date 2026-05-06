@@ -720,7 +720,7 @@ class SimulationGUI(QMainWindow):
         ml = getattr(mp, 'mission_logger', None) if mp else None
         ax = self.env._env_plot.ax # Simulation axes
 
-        # 1. Clear previous elements
+        # Clear previous elements
         if hasattr(self, '_overlay_elements'):
             for item in self._overlay_elements:
                 try:
@@ -732,7 +732,7 @@ class SimulationGUI(QMainWindow):
             extent = self._get_grid_extent(gm)
             alpha_val = self.alpha_overlay.value()
             
-            # --- PART 1: DRAW THE MAP ---
+            # draw overlay map
             img_data = None
             if kind == "occ":
                 img_data = gm._occ.T
@@ -740,7 +740,6 @@ class SimulationGUI(QMainWindow):
                 img_data = gm._risk.T
             elif kind == "cost":
                 mission = next((m for m in self.adt.missions if m.mission_id == mission_id), None)
-                # FIX: Ensure mission_posture is handled if it's an Enum
                 from overarchingTwin.mission import POSTURE_WEIGHTS, MissionPosture
                 posture = mission.mission_posture
                 
@@ -757,12 +756,10 @@ class SimulationGUI(QMainWindow):
                                alpha=alpha_val, zorder=2) # Base layer
                 self._overlay_elements.append(im)
 
-            # --- PART 2: DRAW THE PATH ---
+            # draw path
             if ml is not None and mission_id in ml._per_mission_log:
                 logs = ml._per_mission_log[mission_id]
                 for entry in logs:
-                    # DEBUG: Print to console to see if IDs actually match
-                    # print(f"Checking Logger ID: {entry['id']} (type {type(entry['id'])}) vs Target ID: {ugv_id} (type {type(ugv_id)})")
                     
                     if str(entry['id']) == str(ugv_id): # Force string comparison to be safe
                         path = entry.get('path')

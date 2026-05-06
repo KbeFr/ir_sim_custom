@@ -116,13 +116,24 @@ class OverArchingTwin:
         self._replan_log:   list[dict]             = []
 
     def set_perception_mode(self, mode : PerceptionMode):
-        if mode == self.perception_mode or mode not in PerceptionMode.get_names():
+        mode = PerceptionMode[mode]
+
+        #Step sensors if sim didnt run before, otherwise no detections present
+        if self._sim_step == 0:
+            self.uav_fleet.sensor_step()
+            self.ugvs_sensor_step()
+
+        print(f"[OVERACHING] set_perception_mode called, previous: {self.perception_mode}, new : {mode} ")
+
+
+        if mode == self.perception_mode:
             pass
         elif mode == PerceptionMode.ALL:
             self.percieved_obstacles = self.env.obstacle_list
             self.perception_mode = mode
         elif mode == PerceptionMode.UAV:
             self.percieved_obstacles = self.uav_fleet.get_uavs_view()
+            print(self.percieved_obstacles)
             self.perception_mode = mode
         elif mode == PerceptionMode.UGV:
             self.percieved_obstacles = self.get_ugvs_view()
@@ -131,10 +142,13 @@ class OverArchingTwin:
             self.percieved_obstacles = self.get_merged_view()
             self.perception_mode = mode
 
+        #update gridmap
+        self.grid_map.change_perception(self.percieved_obstacles)
+
     def get_merged_view(self):
         object = []
         object.extend(self.uav_fleet.get_uavs_view())
-        object.extend(self.get_ugvs_view)
+        object.extend(self.get_ugvs_view())
         return object
 
     def get_ugvs_view(self):
@@ -142,7 +156,11 @@ class OverArchingTwin:
         for ugv in self._ugvs:
             objects.extend(ugv.get_ugv_view())
         return objects
-        
+    
+    def ugvs_sensor_step(self):
+        for ugv in self._ugvs:
+            ugv.sensor_step()
+
 
 
     """

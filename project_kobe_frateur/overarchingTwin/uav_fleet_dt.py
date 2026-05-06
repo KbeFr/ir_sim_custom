@@ -39,3 +39,6 @@ class UAVFleetDT:
                 geoms.append(cam._geometry)
         return geoms
 
+    def sensor_step(self):
+        for uav in self.uavs:
+            uav.sensor_step()

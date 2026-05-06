@@ -81,7 +81,9 @@ class GlobalGridMap:
         """Set of (gx, gy) cells currently inside UAV camera footprint."""
         return self._coverage
 
-    
+
+
+
     # --- Coverage update 
 
     def update_coverage(self, coverage_geometries: list) -> None:

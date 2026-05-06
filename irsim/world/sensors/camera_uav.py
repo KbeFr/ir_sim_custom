@@ -62,7 +62,7 @@ class CameraUAV:
         if offset is None:
             offset = [0, 0, 0]
             
-        self.sensor_type = "camera"
+        self.sensor_type = "camera_uav"
         self.obj_id = obj_id
 
         self.length = length
@@ -169,7 +169,7 @@ class CameraUAV:
         
         if object_tree is None:
             return detected
-
+        
         # Find potential objects near the camera geometry
         potential_geometries_index = object_tree.query(self._geometry)
 
