@@ -119,7 +119,6 @@ class MissionLogger:
                 else:
                     assigned_str = "(Loser)" 
                 cost = ugv_plan["cost_assigned"]
-                print(f"CHECK { cost } ")
                 if (cost > 1e8):
                    assigned_str = "(Insufficient Battery)"     
 

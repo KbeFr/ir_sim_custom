@@ -13,7 +13,7 @@ import time
 import numpy as np
 from matplotlib.path import Path
 from shapely.geometry import Point
-import shapely
+from irsim.world.map import Map
 
 
 class GlobalGridMap:
@@ -53,20 +53,21 @@ class GlobalGridMap:
         self._W, self._H, self._ox, self._oy = world_specs
         self.obstacle_list = obstacle_list
 
-        print("[GlobalGridMap] Rasterising static obstacles…")
-        t0 = time.perf_counter()
-        self._occ: np.ndarray = self._rasterise()  
-        print(
-            f"[GlobalGridMap] Grid {self._occ.shape}  "
-            f"{int(np.sum(self._occ > 50))} obstacle cells  "
-            f"{(time.perf_counter() - t0) * 1000:.0f} ms"
-        )
+        self._occ: np.ndarray = self._create_occupancy_grid()  
 
         self.nx, self.ny = self._occ.shape
-
         self._risk: np.ndarray = self._build_risk_layer()
-
         self._coverage: set[tuple[int, int]] = set()
+
+        self.env_map = Map(
+            width=self._W,
+            height=self._H,
+            resolution=self.res,
+            obstacle_list=self.obstacle_list,
+            grid=self._occ,
+            world_offset=(self._ox, self._oy)
+        )
+
 
     # --- Properties 
 
@@ -218,6 +219,22 @@ class GlobalGridMap:
                 img = (img - lo) / (hi - lo)
         return img
 
+
+    def change_perception(self, perceived_obstacles: list) -> None:
+            """
+            Update the map based on newly perceived obstacles.
+            """
+            # update the obstacle list 
+            self.obstacle_list = perceived_obstacles
+            
+            # Re-rasterize grid and risk layers
+            self._occ = self._create_occupancy_grid()
+            self._risk = self._build_risk_layer()
+            
+            # Update the ir-sim Map object 
+            self.env_map.obstacle_list = self.obstacle_list
+            self.env_map.grid = self._occ
+            
     # --- Coordinate helpers 
 
     def world_to_cell(self, x: float, y: float) -> tuple[int, int]:
@@ -232,15 +249,19 @@ class GlobalGridMap:
         )
 
 
-
     # --- Private helpers 
 
-    def _rasterise(self) -> np.ndarray:
+    def _create_occupancy_grid(self) -> np.ndarray:
         """
         Convert Shapely obstacle geometries to a discrete occupancy grid.
         Dynamic obstacles are excluded.
         Robot-radius clearance is added via isotropic binary dilation.
         """
+
+        #Time the rasterization for possible optimization 
+        print("[GlobalGridMap] Rasterising static obstacles…")
+        t0 = time.perf_counter()
+
         nx = int(round(self._W / self.res))
         ny = int(round(self._H / self.res))
         grid = np.zeros((nx, ny), dtype=np.float64)
@@ -283,6 +304,13 @@ class GlobalGridMap:
 
         # Hard world-boundary walls
         grid[0, :] = grid[-1, :] = grid[:, 0] = grid[:, -1] = 100.0
+
+        print(
+            f"[GlobalGridMap] Grid {grid.size}  "
+            f"{int(np.sum(grid > 50))} obstacle cells  "
+            f"{(time.perf_counter() - t0) * 1000:.0f} ms"
+        )
+
         return grid
 
     def _build_risk_layer(self) -> np.ndarray:

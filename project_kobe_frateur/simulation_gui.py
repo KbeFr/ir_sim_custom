@@ -2,7 +2,7 @@
 """
 PyQt6 GUI for IRSim + OverArchingTwin.
 
-Design pattern: 
+Design pattern: Adapter + Observer.
   - Embeds env._env_plot.fig via FigureCanvasQTAgg  (zero ir-sim changes)
   - QTimer replaces plt.pause() entirely
   - Visibility toggling via filtered `objects` list passed to env._env_plot.step()
@@ -15,10 +15,14 @@ Usage (from custom_world.py):
 """
 
 import sys
+import numpy as np
 import matplotlib
 matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
-
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from overarchingTwin.overarching_twin import PerceptionMode
+
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -30,7 +34,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 
 from overarchingTwin.mission_planner import Mission, MissionType
-from overarchingTwin.overarching_twin import PerceptionMode
+
 
 class SimulationGUI(QMainWindow):
     """Main window: matplotlib canvas (left) + tabbed control panel (right)."""
@@ -54,6 +58,10 @@ class SimulationGUI(QMainWindow):
         self._use_global_plan = False
         self._visible_robots  = {r.id: True for r in env.robot_list}
         self._show_sensors    = True
+        self._overlay_active  = False        # imshow overlay on sim canvas
+        self._overlay_im      = None         # AxesImage handle for overlay
+        self._map_fig         = Figure(figsize=(6, 6), tight_layout=True)
+        self._map_ax          = self._map_fig.add_subplot(111)
 
         self.setWindowTitle("HDT Simulation — Control Panel")
         self.resize(1440, 860)
@@ -81,15 +89,35 @@ class SimulationGUI(QMainWindow):
     # ── Canvas panel (left) ────────────────────────────────────────────────
 
     def _build_canvas_panel(self):
-        panel = QWidget()
-        vbox  = QVBoxLayout(panel)
+        """Left area: tabbed between the live sim canvas and the map viewer."""
+        panel     = QWidget()
+        vbox      = QVBoxLayout(panel)
         vbox.setContentsMargins(0, 0, 0, 0)
 
-        self.canvas = FigureCanvasQTAgg(self.env._env_plot.fig)
-        toolbar     = NavigationToolbar2QT(self.canvas, panel)
+        self._canvas_tabs = QTabWidget()
 
-        vbox.addWidget(toolbar)
-        vbox.addWidget(self.canvas, stretch=1)
+        # ── Tab 0: Simulation ──────────────────────────────────────────────
+        sim_widget  = QWidget()
+        sim_vbox    = QVBoxLayout(sim_widget)
+        sim_vbox.setContentsMargins(0, 0, 0, 0)
+        self.canvas = FigureCanvasQTAgg(self.env._env_plot.fig)
+        sim_toolbar = NavigationToolbar2QT(self.canvas, sim_widget)
+        sim_vbox.addWidget(sim_toolbar)
+        sim_vbox.addWidget(self.canvas, stretch=1)
+
+        # ── Tab 1: Map Viewer ──────────────────────────────────────────────
+        map_widget  = QWidget()
+        map_vbox    = QVBoxLayout(map_widget)
+        map_vbox.setContentsMargins(0, 0, 0, 0)
+        self.map_canvas  = FigureCanvasQTAgg(self._map_fig)
+        map_toolbar      = NavigationToolbar2QT(self.map_canvas, map_widget)
+        map_vbox.addWidget(map_toolbar)
+        map_vbox.addWidget(self.map_canvas, stretch=1)
+
+        self._canvas_tabs.addTab(sim_widget, "🌐  Simulation")
+        self._canvas_tabs.addTab(map_widget, "🗺  Map View")
+
+        vbox.addWidget(self._canvas_tabs, stretch=1)
         vbox.addLayout(self._build_playback_bar())
         return panel
 
@@ -134,6 +162,7 @@ class SimulationGUI(QMainWindow):
         tabs.addTab(self._build_visibility_tab(), "👁  Visibility")
         tabs.addTab(self._build_robots_tab(),     "🤖  Robots")
         tabs.addTab(self._build_mission_tab(),    "🎯  Missions")
+        tabs.addTab(self._build_maps_tab(),       "🗺  Maps")
         tabs.addTab(self._build_log_tab(),        "📋  Log")
         return tabs
 
@@ -319,6 +348,76 @@ class SimulationGUI(QMainWindow):
         layout.addStretch()
         return w
 
+
+    # ── Maps tab ───────────────────────────────────────────────────────────
+
+    def _build_maps_tab(self):
+        w      = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setSpacing(8)
+
+        # ── Layer selector ─────────────────────────────────────────────────
+        grp_sel  = QGroupBox("Layer")
+        sel_vbox = QVBoxLayout(grp_sel)
+
+        self.map_layer_combo = QComboBox()
+        self._rebuild_map_layer_combo()          # populate from current adt state
+        sel_vbox.addWidget(self.map_layer_combo)
+
+        btn_refresh_list = QPushButton("🔄  Refresh layer list")
+        btn_refresh_list.clicked.connect(self._rebuild_map_layer_combo)
+        sel_vbox.addWidget(btn_refresh_list)
+        layout.addWidget(grp_sel)
+
+        # ── Colormap ───────────────────────────────────────────────────────
+        grp_cmap  = QGroupBox("Colormap")
+        cmap_vbox = QVBoxLayout(grp_cmap)
+        self.cmap_combo = QComboBox()
+        self.cmap_combo.addItems(["YlOrRd", "viridis", "plasma", "gray", "RdYlGn_r"])
+        cmap_vbox.addWidget(self.cmap_combo)
+        layout.addWidget(grp_cmap)
+
+        # ── UGV posture weights (for cost maps) ───────────────────────────
+        grp_w   = QGroupBox("Cost map — UGV params")
+        w_form  = QFormLayout(grp_w)
+        self.cost_mass_spin    = QDoubleSpinBox(); self.cost_mass_spin.setRange(0.1, 200); self.cost_mass_spin.setValue(20.0)
+        self.cost_speed_spin   = QDoubleSpinBox(); self.cost_speed_spin.setRange(0.01, 10); self.cost_speed_spin.setValue(1.0)
+        self.cost_anc_spin     = QDoubleSpinBox(); self.cost_anc_spin.setRange(0, 100); self.cost_anc_spin.setValue(0.0)
+        self.posture_map_combo = QComboBox(); self.posture_map_combo.addItems(["EXPLORE", "DEFEND", "ATTACK"])
+        w_form.addRow("Mass [kg]:",    self.cost_mass_spin)
+        w_form.addRow("Avg speed:",    self.cost_speed_spin)
+        w_form.addRow("Anc. drain:",   self.cost_anc_spin)
+        w_form.addRow("Posture:",      self.posture_map_combo)
+        layout.addWidget(grp_w)
+
+        # ── Overlay on sim ─────────────────────────────────────────────────
+        self.chk_overlay = QCheckBox("Overlay on simulation view (α=0.35)")
+        self.chk_overlay.toggled.connect(self._on_overlay_toggle)
+        layout.addWidget(self.chk_overlay)
+
+        # ── Auto-refresh on sim step ───────────────────────────────────────
+        self.chk_map_autorefresh = QCheckBox("Auto-refresh every N steps")
+        self.chk_map_autorefresh.setChecked(False)
+        layout.addWidget(self.chk_map_autorefresh)
+
+        self.map_refresh_spin = QSpinBox()
+        self.map_refresh_spin.setRange(1, 200)
+        self.map_refresh_spin.setValue(20)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Refresh every:"))
+        row.addWidget(self.map_refresh_spin)
+        row.addWidget(QLabel("steps"))
+        layout.addLayout(row)
+
+        # ── Manual render button ───────────────────────────────────────────
+        btn_render = QPushButton("🖼  Render selected layer")
+        btn_render.clicked.connect(self._render_map_layer)
+        layout.addWidget(btn_render)
+
+        layout.addStretch()
+        return w
+
     # ── Log tab ────────────────────────────────────────────────────────────
 
     def _build_log_tab(self):
@@ -377,6 +476,11 @@ class SimulationGUI(QMainWindow):
 
         if self._step % 15 == 0:
             self._refresh_mission_list()
+
+        # Auto-refresh map view
+        if (self.chk_map_autorefresh.isChecked()
+                and self._step % max(1, self.map_refresh_spin.value()) == 0):
+            self._render_map_layer()
 
     def _env_plot_step(self, objects):
         """
@@ -461,6 +565,196 @@ class SimulationGUI(QMainWindow):
         if hasattr(self.adt, 'set_perception_mode'):
             self.adt.set_perception_mode(mode)
         self._log(f"Perception mode → {mode}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Map layer rendering
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _rebuild_map_layer_combo(self):
+        """Populate the layer dropdown from adt.grid_map and mission_logger."""
+        self.map_layer_combo.clear()
+
+        gm = getattr(self.adt, 'grid_map', None)
+        if gm is not None:
+            self.map_layer_combo.addItem("Occupancy Grid",    ("occ",  None, None))
+            self.map_layer_combo.addItem("Risk Layer",        ("risk", None, None))
+        
+        mp = getattr(self.adt, 'mission_planner', None)
+        if mp is not None:
+            ml = getattr(mp, 'mission_logger', None)
+            if ml is not None:
+                for mission_id, ugv_logs in ml._per_mission_log.items():
+                    for entry in ugv_logs:
+                        label = f"Cost map : Mission {mission_id}, UGV {entry['id']}"
+                        self.map_layer_combo.addItem(
+                            label, ("cost", mission_id, entry['id'])
+                        )
+
+        if self.map_layer_combo.count() == 0:
+            self.map_layer_combo.addItem("No layers available", None)
+
+    def _get_grid_extent(self, gm):
+        """Return [xmin, xmax, ymin, ymax] for imshow extent."""
+        ox = getattr(gm, '_ox', getattr(gm, 'ox', 0))
+        oy = getattr(gm, '_oy', getattr(gm, 'oy', 0))
+        W  = getattr(gm, '_W',  getattr(gm, 'width',  40))
+        H  = getattr(gm, '_H',  getattr(gm, 'height', 40))
+        return [ox, ox + W, oy, oy + H]
+
+    def _render_map_layer(self):
+        """Render the currently selected map layer onto the Map View canvas."""
+        data = self.map_layer_combo.currentData()
+        if data is None:
+            return
+
+        kind, mission_id, ugv_id = data
+        gm   = getattr(self.adt, 'grid_map', None)
+        mp = getattr(self.adt, 'mission_planner', None)
+        if mp is not None:
+            ml = getattr(mp, 'mission_logger', None)
+        cmap = self.cmap_combo.currentText()
+
+        self._map_ax.clear()
+
+        try:
+            if kind == "occ" and gm is not None:
+                grid   = gm._occ
+                extent = self._get_grid_extent(gm)
+                im = self._map_ax.imshow(
+                    grid.T, origin='lower', extent=extent,
+                    cmap='gray_r', vmin=0, vmax=100,
+                )
+                self._map_ax.set_title("Occupancy Grid")
+                self._add_map_colorbar(im, "Occupancy (0=free, 100=occ)")
+
+            elif kind == "risk" and gm is not None:
+                grid   = gm._risk
+                extent = self._get_grid_extent(gm)
+                im = self._map_ax.imshow(
+                    grid.T, origin='lower', extent=extent, cmap=cmap,
+                )
+                self._map_ax.set_title("Risk Layer")
+                self._add_map_colorbar(im, "Risk score")
+
+            elif kind == "cost" and gm is not None and ml is not None:
+                from overarchingTwin.mission import POSTURE_WEIGHTS
+
+                # Get mission from adt 
+                mission = next(
+                    (m for m in self.adt.missions if m.mission_id == mission_id), None
+                )
+                # Get posture from this mission 
+                posture  = (mission.mission_posture
+                            if mission else self.posture_map_combo.currentText())
+                weights  = POSTURE_WEIGHTS[posture]
+
+                cost_img = gm.get_cost_image(
+                    weights   = weights,
+                    robot_mass= self.cost_mass_spin.value(),
+                    v_avg     = self.cost_speed_spin.value(),
+                    Ka        = self.cost_anc_spin.value(),
+                )
+                extent = self._get_grid_extent(gm)
+                im = self._map_ax.imshow(
+                    cost_img.T, origin='lower', extent=extent,
+                    cmap=cmap, vmin=0, vmax=1,
+                )
+                # Draw the planned path if available
+                if ml is not None and mission_id in ml._per_mission_log:
+                    for entry in ml._per_mission_log[mission_id]:
+                        if entry['id'] == ugv_id:
+                            path = entry.get('path')
+                            if path is not None and hasattr(path, 'ndim') and path.ndim == 2:
+                                self._map_ax.plot(path[0], path[1], 'b-', lw=1.5, label="Path")
+                                self._map_ax.plot(path[0][-1], path[1][-1], 'go', ms=5)
+                                self._map_ax.plot(path[0][0],  path[1][0],  'rx', ms=7)
+                            break
+                if(ml._per_mission_assignement_log[mission_id][0]["ugv_id"] == ugv_id):
+                    assigned_str = ": [Winner]"
+                else:
+                    assigned_str = " - [Loser]" 
+
+                self._map_ax.set_title(f"Cost Map - Mission: {mission_id} - UGV: {ugv_id} - Cost:{entry['cost']:.2f} \n[{posture}]" + assigned_str)
+                self._add_map_colorbar(im, "Normalised cost")
+
+            self._map_ax.set_xlabel("x [m]")
+            self._map_ax.set_ylabel("y [m]")
+            self.map_canvas.draw_idle()
+
+            # Switch to Map View tab automatically
+            self._canvas_tabs.setCurrentIndex(1)
+
+        except Exception as e:
+            self._log(f"[Map render error] {e}")
+
+        # Update overlay on sim canvas if active
+        if self._overlay_active:
+            self._draw_overlay(kind, mission_id, ugv_id)
+
+    def _add_map_colorbar(self, im, label: str):
+        """Add or replace colorbar on the map figure."""
+        # Remove old colorbars to avoid stacking
+        for ax in self._map_fig.axes[1:]:
+            self._map_fig.delaxes(ax)
+        self._map_fig.colorbar(im, ax=self._map_ax, label=label, fraction=0.046, pad=0.04)
+
+    def _on_overlay_toggle(self, checked: bool):
+        self._overlay_active = checked
+        if not checked and self._overlay_im is not None:
+            self._overlay_im.remove()
+            self._overlay_im = None
+            self.canvas.draw_idle()
+        elif checked:
+            self._render_map_layer()   # immediately update
+
+    def _draw_overlay(self, kind, mission_id, ugv_id):
+        """Draw a semi-transparent imshow on the *sim* canvas axes."""
+        gm  = getattr(self.adt, 'grid_map', None)
+        ml  = getattr(self.adt, 'mission_logger', None)
+        ax  = self.env._env_plot.ax
+
+        if self._overlay_im is not None:
+            try:
+                self._overlay_im.remove()
+            except Exception:
+                pass
+            self._overlay_im = None
+
+        try:
+            extent = self._get_grid_extent(gm)
+            cmap   = self.cmap_combo.currentText()
+
+            if kind == "occ" and gm is not None:
+                grid = gm._occ
+                self._overlay_im = ax.imshow(
+                    grid.T, origin='lower', extent=extent,
+                    cmap='gray_r', vmin=0, vmax=100, alpha=0.35, zorder=2,
+                )
+            elif kind == "risk" and gm is not None:
+                self._overlay_im = ax.imshow(
+                    gm._risk.T, origin='lower', extent=extent,
+                    cmap=cmap, alpha=0.35, zorder=2,
+                )
+            elif kind == "cost" and gm is not None:
+                from overarchingTwin.mission import POSTURE_WEIGHTS
+                mission = next(
+                    (m for m in self.adt.missions if m.mission_id == mission_id), None
+                )
+                posture = (mission.mission_posture
+                           if mission else self.posture_map_combo.currentText())
+                cost_img = gm.env_map.get_cost_image(
+                    weights=POSTURE_WEIGHTS[posture],
+                    robot_mass=self.cost_mass_spin.value(),
+                    v_avg=self.cost_speed_spin.value(),
+                    Ka=self.cost_anc_spin.value(),
+                )
+                self._overlay_im = ax.imshow(
+                    cost_img.T, origin='lower', extent=extent,
+                    cmap=cmap, vmin=0, vmax=1, alpha=0.35, zorder=2,
+                )
+            self.canvas.draw_idle()
+        except Exception as e:
+            self._log(f"[Overlay error] {e}")
 
     # ══════════════════════════════════════════════════════════════════════
     # Robot spawn / delete

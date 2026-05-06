@@ -54,11 +54,25 @@ class UAVTwin(ObjectBase):
         self.altitude = UAV_ALTITUDE
         self.battery_status = UAV_BATTERY
     
+
     def get_uav_view(self):
         """
-        Returns the position of each object in the environment.
-        Applies positional uncertainty (noise) that scales linearly with the UAV's altitude.
+        Returns the data collected by the UÄV's onboard camera (if attached).
         """
+        # Search the sensor array for the CameraUAV built earlier
+        camera = next((sensor for sensor in self.sensors if sensor.sensor_type == "camera_uav"), None)
+        
+        if camera:
+            return camera.get_detected_objects()
+        else:
+            self.logger.warning(f"UGV {self.id} requested view but has no Camera sensor attached.")
+            return []
+
+
+    """ This Is for the uncertainty with higher altitude, will implement later 
+    def get_uav_view(self):
+        #Returns the position of each object in the environment.
+        #Applies positional uncertainty (noise) that scales linearly with the UAV's altitude.
         detected = []
         
         # Noise scales with altitude (e.g. 3.0m alt * 0.05 = 0.15m standard deviation)
@@ -93,7 +107,7 @@ class UAVTwin(ObjectBase):
             })
             
         return detected
-
+    """
     def step(self, velocity: np.ndarray | None = None, sensor_step: bool = True, **kwargs):
         """
         Override the step function to include battery dynamics.

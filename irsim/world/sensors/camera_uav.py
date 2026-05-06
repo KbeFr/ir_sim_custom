@@ -177,8 +177,6 @@ class CameraUAV:
             geo = geometries[geom_index]
             obj = objects[geom_index]
 
-
-
             # Ignore itself, invalid objects, or unobstructed items
             if obj._id == self.obj_id or not obj._geometry_valid or obj.unobstructed:
                 continue
@@ -189,6 +187,10 @@ class CameraUAV:
 
             # Check if the object intersects or is fully contained within the camera view
             if self._geometry.intersects(geo) or self._geometry.contains(geo):
+                detected.append(obj)  
+        return detected          
+        """
+                
                 world_pos = obj.state[0:2]
 
                 if self.noise:
@@ -203,6 +205,7 @@ class CameraUAV:
                 })
 
         return detected
+        """
 
     def _get_relative_pos(self, world_pos):
         """

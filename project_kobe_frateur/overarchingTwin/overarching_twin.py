@@ -5,6 +5,7 @@ import numpy as np
 
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
+from irsim.env.env_base import EnvBase
 from overarchingTwin.uav_fleet_dt import UAVFleetDT
 from overarchingTwin.grid_map import GlobalGridMap
 from overarchingTwin.mission_planner import (
@@ -46,7 +47,7 @@ class OverArchingTwin:
 
     def __init__(
         self,
-        env,
+        env:             EnvBase ,
         uav:             list[UAVTwin] | UAVTwin,
         ugv:             list[UGVTwin] | UGVTwin,
         mission_logger : MissionLogger,
@@ -69,23 +70,17 @@ class OverArchingTwin:
 
         # --- Define innit obastacles view 
         self.perception_mode : PerceptionMode = PerceptionMode.ALL
-        self.percieved_obstacles = None
+        self.percieved_obstacles = env.obstacle_list
         
-
-
         # ---  global grid map + cost map 
         self.grid_map = GlobalGridMap(
             world_specs   = self._world_specs,
-            obstacle_list = env.obstacle_list,
+            obstacle_list = self.percieved_obstacles,
             resolution    = resolution,
         )
 
-        # Inject grid into env_map for AStarPlanner collision check
-        self.env_map       = env.get_map(resolution=resolution)
-        self.env_map.grid  = self.grid_map.grid
-
         # --- A* planner
-        self._astar = AStarPlanner(env_map=self.env_map)
+        self._astar = AStarPlanner(env_map=self.grid_map.env_map)
 
         # --- mission planner 
         self.missions:  list[Mission] = []
@@ -94,8 +89,8 @@ class OverArchingTwin:
         
         self._dt : int = 0.1
 
-
-        self._mission_planner = MissionPlanner(
+        
+        self.mission_planner = MissionPlanner(
             astar_planner    = self._astar,
             grid_map         = self.grid_map,
             sim_time_fn      = lambda: self._sim_step * self._dt,
@@ -120,9 +115,34 @@ class OverArchingTwin:
         self._active_paths: dict[str, np.ndarray] = {}
         self._replan_log:   list[dict]             = []
 
-    def set_perception_mode(self):
-        pass
+    def set_perception_mode(self, mode : PerceptionMode):
+        if mode == self.perception_mode or mode not in PerceptionMode.get_names():
+            pass
+        elif mode == PerceptionMode.ALL:
+            self.percieved_obstacles = self.env.obstacle_list
+            self.perception_mode = mode
+        elif mode == PerceptionMode.UAV:
+            self.percieved_obstacles = self.uav_fleet.get_uavs_view()
+            self.perception_mode = mode
+        elif mode == PerceptionMode.UGV:
+            self.percieved_obstacles = self.get_ugvs_view()
+            self.perception_mode = mode
+        elif mode == PerceptionMode.MERGED:
+            self.percieved_obstacles = self.get_merged_view()
+            self.perception_mode = mode
 
+    def get_merged_view(self):
+        object = []
+        object.extend(self.uav_fleet.get_uavs_view())
+        object.extend(self.get_ugvs_view)
+        return object
+
+    def get_ugvs_view(self):
+        objects = []
+        for ugv in self._ugvs:
+            objects.extend(ugv.get_ugv_view())
+        return objects
+        
 
 
     """
@@ -139,7 +159,7 @@ class OverArchingTwin:
 
 
         # Assign best ugv for mission and weights 
-        new_paths = self._mission_planner.assign_and_plan(
+        new_paths = self.mission_planner.assign_and_plan(
             missions = self.missions,
             ugv_list = self._ugvs,
         )
@@ -214,7 +234,7 @@ class OverArchingTwin:
                             None,
                         )
                         if mission:
-                            new_path = self._mission_planner.replan(
+                            new_path = self.mission_planner.replan(
                                 ugv, mission,
                                 POSTURE_WEIGHTS[self._posture],
                                 reason="dynamic_obstacle",

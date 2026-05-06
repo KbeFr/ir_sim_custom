@@ -10,15 +10,23 @@ class UAVFleetDT:
 
     def __init__(self, uavs: list[UAVTwin] | UAVTwin) -> None:
         self.uavs = uavs if isinstance(uavs, list) else [uavs]
-
+    
+    def get_uavs_view(self) -> list[dict]:
+        obstacles = []
+        for uav in self.uavs:
+            obstacles.extend(uav.get_uav_view())
+        return obstacles
+    
+    """For real position return, not nessesary yet
     def get_uav_view(self) -> list[dict]:
-        """Merged obstacle detections, deduped by id."""
+        #Merged obstacle detections, deduped by id.
         seen: dict[int, dict] = {}
         for uav in self.uavs:
             for obj in uav.get_uav_view():
                 seen[obj["id"]] = obj
         return list(seen.values())
-
+    """
+        
     def get_coverage_geometry(self) -> list:
         """Shapely geometries of all active UAV camera footprints."""
         geoms = []
