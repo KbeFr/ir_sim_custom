@@ -11,13 +11,16 @@ class UAVFleetDT:
     def __init__(self, uavs: list[UAVTwin] | UAVTwin) -> None:
         self.uavs = uavs if isinstance(uavs, list) else [uavs]
         #Objects that hidden for fault injection
-        self._fault_hidden = []
+        self.hidden_objects = set()
     
     def get_uavs_view(self) -> list[dict]:
         obstacles = []
         for uav in self.uavs:
-            obstacles.extend([obstacle for obstacle in uav.get_uav_view() if obstacle.id not in self._fault_hidden])
-        return obstacles
+            obstacles.extend(uav.get_uav_view())
+        # Convert to set for high-speed lookups
+        hidden_set = self.hidden_objects
+        
+        return [obj for obj in obstacles if obj not in hidden_set]
     
     """For real position return, not nessesary yet
     def get_uav_view(self) -> list[dict]:

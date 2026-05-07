@@ -222,7 +222,7 @@ class GlobalGridMap:
         return img
 
 
-    def change_perception(self, perceived_obstacles: list) -> None:
+    def update_perception(self, perceived_obstacles: list) -> None:
             """
             Update the map based on newly perceived obstacles.
             """
@@ -279,11 +279,6 @@ class GlobalGridMap:
             if geom is None:
                 continue
             
-            centroid = obs._geometry.centroid
-            print("geometry centroid:", centroid.x, centroid.y)
-            print("state position:   ", obs.state[0,0], obs.state[1,0])
-
-
             minx, miny, maxx, maxy = geom.bounds
             i0 = max(0,    int((minx - self._ox) / self.res) - 1)
             i1 = min(nx-1, int((maxx - self._ox) / self.res) + 1)

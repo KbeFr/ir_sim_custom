@@ -6,6 +6,7 @@ import numpy as np
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
 from irsim.env.env_base import EnvBase
+from irsim.world.object_base import ObjectBase
 from overarchingTwin.uav_fleet_dt import UAVFleetDT
 from overarchingTwin.grid_map import GlobalGridMap
 from overarchingTwin.mission_planner import (
@@ -118,10 +119,7 @@ class OverArchingTwin:
     def set_perception_mode(self, mode : PerceptionMode):
         mode = PerceptionMode[mode]
 
-
-
         print(f"[OVERACHING] set_perception_mode called, previous: {self.perception_mode}, new : {mode} ")
-
 
         if mode == self.perception_mode:
             pass
@@ -130,7 +128,6 @@ class OverArchingTwin:
             self.perception_mode = mode
         elif mode == PerceptionMode.UAV:
             self.percieved_obstacles = self.get_uavs_view()
-            print(self.percieved_obstacles)
             self.perception_mode = mode
         elif mode == PerceptionMode.UGV:
             self.percieved_obstacles = self.get_ugvs_view()
@@ -140,7 +137,7 @@ class OverArchingTwin:
             self.perception_mode = mode
 
         #update gridmap
-        self.grid_map.change_perception(self.percieved_obstacles)
+        self.grid_map.update_perception(self.percieved_obstacles)
 
     def get_merged_view(self):
         object = []
@@ -168,6 +165,15 @@ class OverArchingTwin:
         for ugv in self._ugvs:
             ugv.sensor_step()
 
+    def add_percieved_obstacle(self, obs ):
+        if obs not in self.percieved_obstacles:
+            self.percieved_obstacles.append(obs)
+        self.grid_map.update_perception(self.percieved_obstacles)    
+
+    def remove_percieved_obstacles(self, obs ):
+        if obs in self.percieved_obstacles:
+            self.percieved_obstacles.remove(obs)
+        self.grid_map.update_perception(self.percieved_obstacles)    
 
 
     """

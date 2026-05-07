@@ -59,7 +59,8 @@ class SimulationGUI(QMainWindow):
         self._step            = 0
         self._running         = False
         self._use_global_plan = False
-        self._visible_robots  = {r.id: True for r in env.robot_list}
+        self._visibility_robots  = {r.id: True for r in env.robot_list}
+        self._visibility_objects = {o.id: True for o in env.obstacle_list}
         self._show_sensors    = True
         self._overlay_active  = False        # imshow overlay on sim canvas
         self._overlay_im      = None         # AxesImage handle for overlay
@@ -450,13 +451,13 @@ class SimulationGUI(QMainWindow):
         # Find nearest robot/obstacle within 1 m tolerance
         hit = None
         best = 1.0  # metres
-        for obj in self.env.robot_list + list(self.env.obstacle_list):
+        for obj in self.env.objects:
             geom = getattr(obj, 'geometry', getattr(obj, '_geometry', None))
             if geom is None:
                 continue
 
             dist = click_point.distance(geom)
-            
+
             if dist < best:
                 best, hit = dist, obj
 
@@ -469,46 +470,85 @@ class SimulationGUI(QMainWindow):
         title.setEnabled(False)
         menu.addAction(title)
         menu.addSeparator()
-        menu.addAction("🗑  Delete",       lambda: self._delete_by_id(hit.id))
-        menu.addAction("👁  Toggle visible", lambda: self._toggle_visible_by_id(hit.id))
-        menu.addAction("🚫  Hide from UAV (fault)", lambda: self._fault_inject_uav(hit))
+        menu.addAction("🗑  Delete",       lambda: self._delete_by_obj(hit))
+        menu.addAction("👁  Toggle visible", lambda: self._toggle_visible_by_obj(hit))
+        menu.addAction("🚫 Toggle UAV Fault", lambda: self._fault_inject_uav(hit))
         menu.exec(self.canvas.mapToGlobal(
             self.canvas.mapFromGlobal(
                 self.canvas.cursor().pos()
             )
         ))
 
-    def _delete_by_id(self, rid):
+    def _delete_by_obj(self, obj):
         #Find the object
-        obj = next((o for o in self.env.objects if o.id == rid), None)
-        
-        if obj is None:
-            self.logger.warning(f"Object with ID {rid} not found.")
-            return
 
         # Perform the actual deletion in the environment
-        self.env.delete_object(rid)
+        self.env.delete_object(obj.id)
 
         # Handle UI updates if it was a robot
         if getattr(obj, 'role', None) == "robot":
-            self._refresh_robot_panel_by_id(rid, remove=True)
+            self._refresh_robot_panel_by_id(obj.id, remove=True)
             self._refresh_delete_combo()
         
         # Refresh visuals
         self._draw_perception_highlights()
         self.canvas.draw_idle()
 
-    def _toggle_visible_by_id(self, rid):
-        current = self._visible_robots.get(rid, True)
-        chk = self._robot_checks.get(rid)
-        if chk:
-            chk.setChecked(not current)   # triggers _on_robot_toggle via signal
+    def _toggle_visible_by_obj(self, obj):
+
+        # Get object visibility status 
+        if obj.id not in self._visibility_objects.keys():
+            self.legger.warning(f"Object selected not in visibility dict")
+            return
+        new_state = not self._visibility_objects.get(obj.id)
+        self._visibility_objects[obj.id] = new_state
+
+        # For the robot toggles on the side 
+        if getattr(obj, 'role', None) == "robot":
+            self._visibility_robots[obj.id] = new_state
+            chk = self._robot_checks.get(obj.id)
+            if chk:
+                chk.setChecked(new_state)   # triggers _on_robot_toggle via signal
+            return
+        
+        #Hide/Show the base irsim visual patch
+        if hasattr(obj, 'plot_patch_list'):
+            for patch in obj.plot_patch_list:
+                try:
+                    patch.set_visible(new_state)
+                except Exception:
+                    pass
+
+        #Set object unobstructed 
+        obj.unobstructed = not new_state
+
+        # Update percieved obstacles in adt 
+        if new_state:
+            self.adt.add_percieved_obstacle(obj)
+            self._log(f"Unhiding obj id={obj.id} (unobstructed)")
+
+        else:
+            self.adt.remove_percieved_obstacles(obj)
+            self._log(f"Hiding obj id={obj.id} (unobstructed)")
+
+        #force redraw
+        self._draw_perception_highlights()
+        if hasattr(self, 'canvas'):
+            self.canvas.draw_idle()
 
     def _fault_inject_uav(self, obj):
         """Remove object from UAV fleet sensor detections (fault injection)."""
         fleet = getattr(self.adt, 'uav_fleet', None)
-        if fleet and hasattr(fleet, '_fault_hidden'):
-            fleet._fault_hidden.add(obj.id)
+        if fleet and hasattr(fleet, 'hidden_objects'):
+            if obj in fleet.hidden_objects:
+                fleet.hidden_objects.remove(obj)
+            else:
+                fleet.hidden_objects.add(obj)
+        #force redraw
+        self._draw_perception_highlights()
+        if hasattr(self, 'canvas'):
+            self.canvas.draw_idle()
+
         self._log(f"🚫 UAV fault: hiding obj id={obj.id} from UAV perception")
 
     # ══════════════════════════════════════════════════════════════════════
@@ -605,7 +645,7 @@ class SimulationGUI(QMainWindow):
     # ══════════════════════════════════════════════════════════════════════
 
     def _on_robot_toggle(self, rid, checked):
-        self._visible_robots[rid] = checked
+        self._visibility_robots[rid] = checked
         # Find the robot and toggle all its patches + sensor patches
         for robot in self.env.robot_list:
             if robot.id != rid:
@@ -634,7 +674,7 @@ class SimulationGUI(QMainWindow):
         """Toggle sensor footprint patches independently of robot body visibility."""
         self._show_sensors = checked
         for robot in self.env.robot_list:
-            robot_visible = self._visible_robots.get(robot.id, True)
+            robot_visible = self._visibility_robots.get(robot.id, True)
             sensor_objs = list(getattr(robot, 'sensors', None) or [])
             single = getattr(robot, 'sensor', None)
             if single is not None and single not in sensor_objs:
@@ -651,6 +691,7 @@ class SimulationGUI(QMainWindow):
         self.perception_mode = mode
         if hasattr(self.adt, 'set_perception_mode'):
             self.adt.set_perception_mode(mode)
+        
         self._log(f"Perception mode → {mode}")
 
     # ══════════════════════════════════════════════════════════════════════
@@ -869,7 +910,6 @@ class SimulationGUI(QMainWindow):
             self._log(f"[Overlay error] {e}")
 
     def _draw_perception_highlights(self):
-        # Clear previous frame's rings
         for a in self._perception_artists:
             try: a.remove()
             except Exception: pass
@@ -877,78 +917,77 @@ class SimulationGUI(QMainWindow):
 
         ax = self.env._env_plot.ax
         gm = getattr(self.adt, 'grid_map', None)
-        if gm is None:
-            return
+        if gm is None: return
 
+        # Get visible IDs
+        try: uav_obs_ids = set(o.id for o in self.adt.get_uavs_view())
+        except Exception: uav_obs_ids = set()
+            
+        try: ugv_obs_ids = set(o.id for o in self.adt.get_ugvs_view())
+        except Exception: ugv_obs_ids = set()
 
-        # Get the two separate views regardless of current mode
-        try:
-            uav_obs = set(id(o) for o in self.adt.get_uavs_view())
-        except Exception:
-            uav_obs = set()
-        try:
-            ugv_obs = set(id(o) for o in self.adt.get_ugvs_view())
-        except Exception:
-            ugv_obs = set()
+        fleet = getattr(self.adt, 'uav_fleet', None)
+        fleet_hidden = getattr(fleet, 'hidden_objects', [])
+        fleet_hidden_ids = set(getattr(o, 'id', o) for o in fleet_hidden)
+        
+        # Get ADT perceived list for our paused-state fallback
+        adt_perceived = getattr(self.adt, 'percieved_obstacles', [])
 
         for obj in self.env.obstacle_list:
-            in_uav = id(obj) in uav_obs
-            in_ugv = id(obj) in ugv_obs
-            if not (in_uav or in_ugv):
+            obj_id = getattr(obj, 'id', None)
+            if obj_id is None: continue
+
+            in_uav = obj_id in uav_obs_ids
+            in_ugv = obj_id in ugv_obs_ids
+            in_adt = obj in adt_perceived # Checks if it exists in your list
+            
+            is_fleet_hidden = obj_id in fleet_hidden_ids
+            is_gui_hidden = not self._visibility_objects.get(obj_id, True) 
+
+            # Skip if hidden and nobody (not even the ADT cache) sees it
+            if not (is_gui_hidden or is_fleet_hidden) and not (in_uav or in_ugv or in_adt):
                 continue
 
             state = getattr(obj, 'state', None)
-            if state is None:
-                continue
-
+            if state is None: continue
             x, y = float(state.flat[0]), float(state.flat[1])
 
-            # Pick ring colour: both=white, UAV-only=cyan, UGV-only=orange
-            if in_uav and in_ugv:
-                color, lw = 'white', 2.0
+            # ==========================================
+            # STYLING RULES
+            # ==========================================
+            if is_gui_hidden:
+                color, lw, facecolor, alpha, ls = '#888888', 1.5, '#DDDDDD', 0.2, ':'
+            elif is_fleet_hidden:
+                color, lw, facecolor, alpha, ls = 'red', 2.5, 'red', 0.4, '-.'
+            elif in_uav and in_ugv:
+                color, lw, facecolor, alpha, ls = 'white', 2.0, 'none', 1.0, '--'
             elif in_uav:
-                color, lw = 'cyan',   2.5
+                color, lw, facecolor, alpha, ls = 'cyan', 2.5, 'none', 1.0, '--'
+            elif in_ugv:
+                color, lw, facecolor, alpha, ls = 'orange', 2.5, 'none', 1.0, '--'
+            elif in_adt:
+                # Fallback: It's unhidden, but the sim is paused so sensors haven't fired yet
+                color, lw, facecolor, alpha, ls = 'yellow', 2.0, 'none', 1.0, '--'
             else:
-                color, lw = 'orange', 2.5
+                continue # Safety catch
 
             vertices = getattr(obj, 'vertices', None)
             shape = getattr(obj, 'shape', 'circle')
 
-            # If the object is a rectangle/polygon, draw a highlighted polygon outline
+            # Draw Patches
             if vertices is not None and shape != 'circle':
-                # Convert to numpy array. Often env vertices are (2, N), matplotlib needs (N, 2)
                 v_array = np.array(vertices)
-                if v_array.shape[0] == 2:
-                    v_array = v_array.T 
+                if v_array.shape[0] == 2: v_array = v_array.T 
                 
-                # Push the vertices outward slightly to create a +0.15m padding gap
                 center = np.array([x, y])
                 direction = v_array - center
                 norms = np.linalg.norm(direction, axis=1, keepdims=True)
-                v_padded = center + direction * (1 + 0.15 / np.maximum(norms, 1e-5))
+                v_padded = center + direction * (1 + 0.1 / np.maximum(norms, 1e-5))
 
-                patch = Polygon(
-                    v_padded,
-                    closed=True,
-                    edgecolor=color,
-                    facecolor='none', # Transparent inside
-                    linewidth=lw,
-                    linestyle='--',
-                    zorder=5
-                )
-            
-            # If it's just a circle, use your original logic
+                patch = Polygon(v_padded, closed=True, edgecolor=color, facecolor=facecolor, alpha=alpha, linewidth=lw, linestyle=ls, zorder=6)
             else:
                 radius = getattr(obj, 'radius', 0.5) + 0.15
-                patch = Circle(
-                    (x, y), 
-                    radius, 
-                    edgecolor=color,
-                    facecolor='none', # Transparent inside
-                    linewidth=lw, 
-                    linestyle='--', 
-                    zorder=5
-                )
+                patch = Circle((x, y), radius, edgecolor=color, facecolor=facecolor, alpha=alpha, linewidth=lw, linestyle=ls, zorder=6)
 
             ax.add_patch(patch)
             self._perception_artists.append(patch)
@@ -1057,7 +1096,7 @@ class SimulationGUI(QMainWindow):
                 lambda checked, r=rid: self._on_robot_toggle(r, checked)
             )
             self._robot_checks[rid] = chk
-            self._visible_robots[rid] = True
+            self._visibility_robots[rid] = True
             # Insert into the scroll area inner layout
             self._robots_inner_layout.insertWidget(
                 self._robots_inner_layout.count() - 1, chk  # before the stretch
@@ -1066,7 +1105,7 @@ class SimulationGUI(QMainWindow):
             chk = self._robot_checks.pop(rid, None)
             if chk:
                 chk.deleteLater()
-            self._visible_robots.pop(rid, None)
+            self._visibility_robots.pop(rid, None)
 
     def _refresh_delete_combo(self):
         """Repopulate the delete dropdown from the current robot list."""
