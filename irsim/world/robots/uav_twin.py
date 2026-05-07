@@ -59,7 +59,6 @@ class UAVTwin(ObjectBase):
         """
         Returns the data collected by the UÄV's onboard camera (if attached).
         """
-        print(self.sensors)
         # Search the sensor array for the CameraUAV built earlier
         camera = next((sensor for sensor in self.sensors if sensor.sensor_type == "camera_uav"), None)
         

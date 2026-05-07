@@ -21,6 +21,8 @@ matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.patches import Polygon, Circle
+from shapely import Point
 
 from overarchingTwin.overarching_twin import PerceptionMode
 from overarchingTwin.mission import MissionPosture
@@ -29,10 +31,10 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QSlider, QLabel, QCheckBox, QGroupBox, QScrollArea,
     QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTabWidget, QTextEdit,
-    QFormLayout,
+    QFormLayout,QMenu
 )
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QAction
 
 from overarchingTwin.mission_planner import Mission, MissionType
 
@@ -63,6 +65,7 @@ class SimulationGUI(QMainWindow):
         self._overlay_im      = None         # AxesImage handle for overlay
         self._map_fig         = Figure(figsize=(6, 6), tight_layout=True)
         self._map_ax          = self._map_fig.add_subplot(111)
+        self._perception_artists = []   # matplotlib patches drawn over sim canvas
 
         self.setWindowTitle("HDT Simulation — Control Panel")
         self.resize(1440, 860)
@@ -72,6 +75,8 @@ class SimulationGUI(QMainWindow):
         self.timer = QTimer()
         self.timer.setInterval(step_ms)
         self.timer.timeout.connect(self._sim_step)
+
+        self._draw_perception_highlights()
 
     # ══════════════════════════════════════════════════════════════════════
     # UI construction
@@ -105,6 +110,8 @@ class SimulationGUI(QMainWindow):
         sim_toolbar = NavigationToolbar2QT(self.canvas, sim_widget)
         sim_vbox.addWidget(sim_toolbar)
         sim_vbox.addWidget(self.canvas, stretch=1)
+
+        self._click_cid = self.canvas.mpl_connect('button_press_event', self._on_canvas_click)
 
         # ── Tab 1: Map Viewer ──────────────────────────────────────────────
         map_widget  = QWidget()
@@ -427,6 +434,82 @@ class SimulationGUI(QMainWindow):
         self.log_text.setFont(QFont("Monospace", 8))
         layout.addWidget(self.log_text)
         return w
+    
+    # ══════════════════════════════════════════════════════════════════════
+    # Canvas Click
+    # ══════════════════════════════════════════════════════════════════════
+
+
+    def _on_canvas_click(self, event):
+        if event.inaxes is None or event.button != 1:
+            return
+        mx, my = event.xdata, event.ydata
+
+        click_point = Point(mx, my)
+
+        # Find nearest robot/obstacle within 1 m tolerance
+        hit = None
+        best = 1.0  # metres
+        for obj in self.env.robot_list + list(self.env.obstacle_list):
+            geom = getattr(obj, 'geometry', getattr(obj, '_geometry', None))
+            if geom is None:
+                continue
+
+            dist = click_point.distance(geom)
+            
+            if dist < best:
+                best, hit = dist, obj
+
+        if hit is None:
+            return
+
+        # Build context menu at cursor
+        menu  = QMenu(self)
+        title = QAction(f"{type(hit).__name__}  id={hit.id}", self)
+        title.setEnabled(False)
+        menu.addAction(title)
+        menu.addSeparator()
+        menu.addAction("🗑  Delete",       lambda: self._delete_by_id(hit.id))
+        menu.addAction("👁  Toggle visible", lambda: self._toggle_visible_by_id(hit.id))
+        menu.addAction("🚫  Hide from UAV (fault)", lambda: self._fault_inject_uav(hit))
+        menu.exec(self.canvas.mapToGlobal(
+            self.canvas.mapFromGlobal(
+                self.canvas.cursor().pos()
+            )
+        ))
+
+    def _delete_by_id(self, rid):
+        #Find the object
+        obj = next((o for o in self.env.objects if o.id == rid), None)
+        
+        if obj is None:
+            self.logger.warning(f"Object with ID {rid} not found.")
+            return
+
+        # Perform the actual deletion in the environment
+        self.env.delete_object(rid)
+
+        # Handle UI updates if it was a robot
+        if getattr(obj, 'role', None) == "robot":
+            self._refresh_robot_panel_by_id(rid, remove=True)
+            self._refresh_delete_combo()
+        
+        # Refresh visuals
+        self._draw_perception_highlights()
+        self.canvas.draw_idle()
+
+    def _toggle_visible_by_id(self, rid):
+        current = self._visible_robots.get(rid, True)
+        chk = self._robot_checks.get(rid)
+        if chk:
+            chk.setChecked(not current)   # triggers _on_robot_toggle via signal
+
+    def _fault_inject_uav(self, obj):
+        """Remove object from UAV fleet sensor detections (fault injection)."""
+        fleet = getattr(self.adt, 'uav_fleet', None)
+        if fleet and hasattr(fleet, '_fault_hidden'):
+            fleet._fault_hidden.add(obj.id)
+        self._log(f"🚫 UAV fault: hiding obj id={obj.id} from UAV perception")
 
     # ══════════════════════════════════════════════════════════════════════
     # Simulation loop
@@ -442,6 +525,9 @@ class SimulationGUI(QMainWindow):
 
         # 1. OverArchingTwin tick
         self.adt.step()
+
+        #Draw border around object that are percieved
+        self._draw_perception_highlights()
 
         # 2. Local controllers → actions
         actions, ids = [], []
@@ -462,6 +548,8 @@ class SimulationGUI(QMainWindow):
         # Visibility is controlled separately via set_visible() on plot_patch_list.
         self._env_plot_step(self.env.robot_list)
         self.canvas.draw_idle()
+
+        self._draw_perception_highlights()
 
         # 5. Bookkeeping
         self._step += 1
@@ -780,6 +868,90 @@ class SimulationGUI(QMainWindow):
             traceback.print_exc()
             self._log(f"[Overlay error] {e}")
 
+    def _draw_perception_highlights(self):
+        # Clear previous frame's rings
+        for a in self._perception_artists:
+            try: a.remove()
+            except Exception: pass
+        self._perception_artists.clear()
+
+        ax = self.env._env_plot.ax
+        gm = getattr(self.adt, 'grid_map', None)
+        if gm is None:
+            return
+
+
+        # Get the two separate views regardless of current mode
+        try:
+            uav_obs = set(id(o) for o in self.adt.get_uavs_view())
+        except Exception:
+            uav_obs = set()
+        try:
+            ugv_obs = set(id(o) for o in self.adt.get_ugvs_view())
+        except Exception:
+            ugv_obs = set()
+
+        for obj in self.env.obstacle_list:
+            in_uav = id(obj) in uav_obs
+            in_ugv = id(obj) in ugv_obs
+            if not (in_uav or in_ugv):
+                continue
+
+            state = getattr(obj, 'state', None)
+            if state is None:
+                continue
+
+            x, y = float(state.flat[0]), float(state.flat[1])
+
+            # Pick ring colour: both=white, UAV-only=cyan, UGV-only=orange
+            if in_uav and in_ugv:
+                color, lw = 'white', 2.0
+            elif in_uav:
+                color, lw = 'cyan',   2.5
+            else:
+                color, lw = 'orange', 2.5
+
+            vertices = getattr(obj, 'vertices', None)
+            shape = getattr(obj, 'shape', 'circle')
+
+            # If the object is a rectangle/polygon, draw a highlighted polygon outline
+            if vertices is not None and shape != 'circle':
+                # Convert to numpy array. Often env vertices are (2, N), matplotlib needs (N, 2)
+                v_array = np.array(vertices)
+                if v_array.shape[0] == 2:
+                    v_array = v_array.T 
+                
+                # Push the vertices outward slightly to create a +0.15m padding gap
+                center = np.array([x, y])
+                direction = v_array - center
+                norms = np.linalg.norm(direction, axis=1, keepdims=True)
+                v_padded = center + direction * (1 + 0.15 / np.maximum(norms, 1e-5))
+
+                patch = Polygon(
+                    v_padded,
+                    closed=True,
+                    edgecolor=color,
+                    facecolor='none', # Transparent inside
+                    linewidth=lw,
+                    linestyle='--',
+                    zorder=5
+                )
+            
+            # If it's just a circle, use your original logic
+            else:
+                radius = getattr(obj, 'radius', 0.5) + 0.15
+                patch = Circle(
+                    (x, y), 
+                    radius, 
+                    edgecolor=color,
+                    facecolor='none', # Transparent inside
+                    linewidth=lw, 
+                    linestyle='--', 
+                    zorder=5
+                )
+
+            ax.add_patch(patch)
+            self._perception_artists.append(patch)
     # ══════════════════════════════════════════════════════════════════════
     # Robot spawn / delete
     # ══════════════════════════════════════════════════════════════════════

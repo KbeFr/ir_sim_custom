@@ -10,11 +10,13 @@ class UAVFleetDT:
 
     def __init__(self, uavs: list[UAVTwin] | UAVTwin) -> None:
         self.uavs = uavs if isinstance(uavs, list) else [uavs]
+        #Objects that hidden for fault injection
+        self._fault_hidden = []
     
     def get_uavs_view(self) -> list[dict]:
         obstacles = []
         for uav in self.uavs:
-            obstacles.extend(uav.get_uav_view())
+            obstacles.extend([obstacle for obstacle in uav.get_uav_view() if obstacle.id not in self._fault_hidden])
         return obstacles
     
     """For real position return, not nessesary yet
@@ -42,3 +44,6 @@ class UAVFleetDT:
     def sensor_step(self):
         for uav in self.uavs:
             uav.sensor_step()
+
+
+    

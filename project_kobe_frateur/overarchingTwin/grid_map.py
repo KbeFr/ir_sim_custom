@@ -278,6 +278,11 @@ class GlobalGridMap:
             geom = obs._geometry
             if geom is None:
                 continue
+            
+            centroid = obs._geometry.centroid
+            print("geometry centroid:", centroid.x, centroid.y)
+            print("state position:   ", obs.state[0,0], obs.state[1,0])
+
 
             minx, miny, maxx, maxy = geom.bounds
             i0 = max(0,    int((minx - self._ox) / self.res) - 1)
