@@ -160,6 +160,7 @@ class MetricsLogger:
 
         figs = [
             self._fig_distance_velocity(),
+            self._fig_distance_acc(),
             self._fig_battery_energy(),
             self._fig_uncertainty(),
             #self._fig_coverage(),
@@ -168,6 +169,7 @@ class MetricsLogger:
         ]
         names = [
             "distance_velocity",
+            "distance_acc"
             "battery_energy",
             "uncertainty",
             "coverage",
@@ -214,6 +216,54 @@ class MetricsLogger:
 
         fig.tight_layout()
         return fig
+    
+    def _fig_distance_acc(self) -> plt.Figure:
+        """Figure 1.5: Distance and Acceleration profile."""
+        r = self._records
+        t = self._t()
+        dist_cumulative = np.cumsum([s.step_dist for s in r])
+        speeds = np.array([s.speed for s in r])
+
+        # Calculate differentials
+        dt = np.mean(np.diff(t))
+        # Acceleration: dv/dt
+        accel = np.diff(speeds, prepend=speeds[0]) / dt
+        # Jerk: da/dt
+        jerk = np.diff(accel, prepend=accel[0]) / dt
+
+        # Calculate Metric
+        msj = np.mean(jerk**2)
+
+        #  Plotting
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
+        fig.suptitle(f"{self.label} — Kinematics Analysis", fontweight='bold')
+
+        # Distance
+        ax1.plot(t, dist_cumulative, color='steelblue', label="Cumulative Distance")
+        ax1.set_ylabel("Distance [m]")
+        ax1.grid(True, alpha=0.3)
+        
+        #dist text     
+        ax1.text(0.98, 0.05, f"Total distance: {dist_cumulative[-1]} m^3/s^9", 
+                transform=ax2.transAxes, ha='right', fontsize=9,
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+
+        print(f"TotalDistance : {dist_cumulative[-1]}")
+
+        # Acceleration (The source of your Jerk)
+        ax2.plot(t, accel, color='darkorange', label="Acceleration")
+        ax2.set_ylabel("Accel [m/s²]")
+        ax2.set_xlabel("Time [s]")
+        ax2.grid(True, alpha=0.3)
+
+        #msj text     
+        ax2.text(0.98, 0.05, f"MSJ: {msj:.2f} m^3/s^9", 
+                transform=ax2.transAxes, ha='right', fontsize=9,
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+
+        fig.tight_layout()
+        return fig
+
 
     def _fig_battery_energy(self) -> plt.Figure:
         """Figure 2: battery state of charge + cumulative energy vs time."""

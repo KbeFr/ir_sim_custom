@@ -562,7 +562,6 @@ class ObjectBase:
 
         Updates the arrive_flag and handles multiple goals by removing completed ones.
         """
-
         if self.check_arrive(self.goal):
             if len(self._goal) == 1:
                 self.arrive_flag = True
@@ -589,6 +588,14 @@ class ObjectBase:
 
         if threshold is None:
             threshold = self.goal_threshold
+        
+        # To make robot drive to last goal if threshold big for local controller        
+        if self._goal is not None and len(self._goal) == 1:
+            threshold = 0.1  # Tight threshold for the final destination
+        else:
+            threshold = self.goal_threshold
+
+        self.goal_threshold = threshold
 
         if self.arrive_mode == "state":
             diff = np.linalg.norm(self.state[:3] - goal[:3])

@@ -23,7 +23,7 @@ class MissionPosture(Enum):
     CONSERVE = 2
     URGENT = 3
     SAFE = 4
-    
+    ONLYDIST = 5
     @classmethod
     def get_names(cls):
         return [member.name for member in cls]
@@ -35,6 +35,7 @@ POSTURE_WEIGHTS: dict[str, tuple] = {
     "CONSERVE":       (1.0,  5.0,  0.5,  2.0,  2.0),
     "URGENT":         (1.0,  0.5,  5.0,  1.0,  2.0),
     "SAFE":           (1.0,  1.0,  1.0,  1.0,  8.0),
+    "ONLYDIST":       (1,  0,  0,  0,  0),
 }
 
 DEFAULT_POSTURE = MissionPosture.EXPLORE

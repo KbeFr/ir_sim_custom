@@ -23,7 +23,7 @@ class CBFQPController:
         self,
         robot_type: str = "omni",
         safety_margin: float = 0.05,
-        cbf_alpha: float = 2.0,
+        cbf_alpha: float = 1.0,
         goal_gain: float = 0.8,
         angle_gain: float = 2.0,
         angle_tolerance: float = 0.1,

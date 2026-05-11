@@ -27,13 +27,13 @@ class CollisionConeCBFController:
 
     def __init__(
         self,
-        robot_type: str = "omni",
+        robot_type: str = "diff",
         safety_margin: float = 0.05,
         goal_gain: float = 0.8,
         angle_gain: float = 2.0,
         angle_tolerance: float = 0.1,
         lookahead: float = 0.25,
-        distance_alpha: float = 2.0,
+        distance_alpha: float = 1.0,
         linearization_eps: float = 1e-6,
     ) -> None:
         self.robot_type = robot_type

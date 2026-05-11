@@ -22,8 +22,9 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.patches import Polygon, Circle
+from matplotlib.colors import to_rgba
+from matplotlib.collections import PatchCollection
 from shapely import Point
-
 from overarchingTwin.overarching_twin import PerceptionMode
 from overarchingTwin.mission import MissionPosture
 
@@ -62,6 +63,7 @@ class SimulationGUI(QMainWindow):
         self._visibility_robots  = {r.id: True for r in env.robot_list}
         self._visibility_objects = {o.id: True for o in env.obstacle_list}
         self._show_sensors    = True
+        self._show_borders    = False         # Borders on object 
         self._overlay_active  = False        # imshow overlay on sim canvas
         self._overlay_im      = None         # AxesImage handle for overlay
         self._map_fig         = Figure(figsize=(6, 6), tight_layout=True)
@@ -202,6 +204,16 @@ class SimulationGUI(QMainWindow):
         sens_vbox.addWidget(self.chk_sensors)
         layout.addWidget(grp_sens)
 
+        # Detection border layer toggle
+        grp_brdr  = QGroupBox("Border Layers")
+        brdr_vbox = QVBoxLayout(grp_brdr)
+        self.chk_border = QCheckBox("Show border detection")
+        self.chk_border.setChecked(False)
+        self.chk_border.toggled.connect(self._on_border_toggle)
+        brdr_vbox.addWidget(self.chk_border)
+        layout.addWidget(grp_brdr)
+
+
         # Per-robot checkboxes
         grp_robots  = QGroupBox("Individual Robots")
         robots_vbox = QVBoxLayout(grp_robots)
@@ -237,6 +249,11 @@ class SimulationGUI(QMainWindow):
         robots_vbox.addLayout(btn_row)
         layout.addWidget(grp_robots)
         layout.addStretch()
+
+
+
+
+
         return w
 
     # ── Robots tab (spawn / delete) ────────────────────────────────────────
@@ -909,29 +926,48 @@ class SimulationGUI(QMainWindow):
             traceback.print_exc()
             self._log(f"[Overlay error] {e}")
 
+    def _on_border_toggle(self, checked):
+        self._show_borders = checked
+        #force redraw
+        self._draw_perception_highlights()
+        if hasattr(self, 'canvas'):
+            self.canvas.draw_idle()
+
+
     def _draw_perception_highlights(self):
+        # 1. Fast cleanup: We will now be clearing 1 Collection instead of 100s of patches
         for a in self._perception_artists:
             try: a.remove()
             except Exception: pass
         self._perception_artists.clear()
 
+        if not getattr(self, '_show_borders', True):  # Safer attribute check
+            return
+
         ax = self.env._env_plot.ax
         gm = getattr(self.adt, 'grid_map', None)
         if gm is None: return
 
-        # Get visible IDs
-        try: uav_obs_ids = set(o.id for o in self.adt.get_uavs_view())
+        # 2. O(1) Lookups: Pre-compute sets outside the loop to avoid redundant calculations
+        try: uav_obs_ids = {o.id for o in self.adt.get_uavs_view()}
         except Exception: uav_obs_ids = set()
             
-        try: ugv_obs_ids = set(o.id for o in self.adt.get_ugvs_view())
+        try: ugv_obs_ids = {o.id for o in self.adt.get_ugvs_view()}
         except Exception: ugv_obs_ids = set()
 
         fleet = getattr(self.adt, 'uav_fleet', None)
-        fleet_hidden = getattr(fleet, 'hidden_objects', [])
-        fleet_hidden_ids = set(getattr(o, 'id', o) for o in fleet_hidden)
+        fleet_hidden_ids = {getattr(o, 'id', o) for o in getattr(fleet, 'hidden_objects', [])}
         
-        # Get ADT perceived list for our paused-state fallback
+        # CRITICAL FIX: Convert list to a set of IDs for O(1) lookup speed
         adt_perceived = getattr(self.adt, 'percieved_obstacles', [])
+        adt_perceived_ids = {getattr(o, 'id', id(o)) for o in adt_perceived}
+
+        # Prepare lists for the PatchCollection
+        patches = []
+        facecolors = []
+        edgecolors = []
+        linewidths = []
+        linestyles = []
 
         for obj in self.env.obstacle_list:
             obj_id = getattr(obj, 'id', None)
@@ -939,12 +975,12 @@ class SimulationGUI(QMainWindow):
 
             in_uav = obj_id in uav_obs_ids
             in_ugv = obj_id in ugv_obs_ids
-            in_adt = obj in adt_perceived # Checks if it exists in your list
+            in_adt = obj_id in adt_perceived_ids 
             
             is_fleet_hidden = obj_id in fleet_hidden_ids
             is_gui_hidden = not self._visibility_objects.get(obj_id, True) 
 
-            # Skip if hidden and nobody (not even the ADT cache) sees it
+            # Skip if hidden and nobody sees it
             if not (is_gui_hidden or is_fleet_hidden) and not (in_uav or in_ugv or in_adt):
                 continue
 
@@ -966,32 +1002,53 @@ class SimulationGUI(QMainWindow):
             elif in_ugv:
                 color, lw, facecolor, alpha, ls = 'orange', 2.5, 'none', 1.0, '--'
             elif in_adt:
-                # Fallback: It's unhidden, but the sim is paused so sensors haven't fired yet
                 color, lw, facecolor, alpha, ls = 'yellow', 2.0, 'none', 1.0, '--'
             else:
-                continue # Safety catch
+                continue
 
             vertices = getattr(obj, 'vertices', None)
             shape = getattr(obj, 'shape', 'circle')
 
-            # Draw Patches
+            # Create geometry but DO NOT add to axes yet
             if vertices is not None and shape != 'circle':
                 v_array = np.array(vertices)
                 if v_array.shape[0] == 2: v_array = v_array.T 
                 
                 center = np.array([x, y])
                 direction = v_array - center
-                norms = np.linalg.norm(direction, axis=1, keepdims=True)
-                v_padded = center + direction * (1 + 0.1 / np.maximum(norms, 1e-5))
+                # Optimized math: +1e-5 avoids np.maximum overhead
+                norms = np.linalg.norm(direction, axis=1, keepdims=True) + 1e-5
+                v_padded = center + direction * (1 + 0.1 / norms)
 
-                patch = Polygon(v_padded, closed=True, edgecolor=color, facecolor=facecolor, alpha=alpha, linewidth=lw, linestyle=ls, zorder=6)
+                patch = Polygon(v_padded, closed=True)
             else:
                 radius = getattr(obj, 'radius', 0.5) + 0.15
-                patch = Circle((x, y), radius, edgecolor=color, facecolor=facecolor, alpha=alpha, linewidth=lw, linestyle=ls, zorder=6)
+                patch = Circle((x, y), radius)
 
-            ax.add_patch(patch)
-            self._perception_artists.append(patch)
-    # ══════════════════════════════════════════════════════════════════════
+            # Store properties for batching. We bake the alpha into an RGBA tuple 
+            # because PatchCollection applies a single alpha to the whole collection otherwise.
+            fc_rgba = to_rgba(facecolor, alpha=alpha) if facecolor != 'none' else (0, 0, 0, 0)
+            ec_rgba = to_rgba(color, alpha=alpha)
+
+            patches.append(patch)
+            facecolors.append(fc_rgba)
+            edgecolors.append(ec_rgba)
+            linewidths.append(lw)
+            linestyles.append(ls)
+
+        # 3. Batch Render: Draw everything at once via PatchCollection
+        if patches:
+            collection = PatchCollection(
+                patches, 
+                facecolors=facecolors, 
+                edgecolors=edgecolors, 
+                linewidths=linewidths, 
+                linestyles=linestyles, 
+                zorder=6,
+                match_original=False # Forces collection to use our explicit arrays
+            )
+            ax.add_collection(collection)
+            self._perception_artists.append(collection)    # ══════════════════════════════════════════════════════════════════════
     # Robot spawn / delete
     # ══════════════════════════════════════════════════════════════════════
 

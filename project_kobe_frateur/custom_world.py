@@ -15,21 +15,18 @@ from mission_logger import MissionLogger
 from simulation_gui import launch
 
 # ---  Config 
-CONTROLLER       = "c3bf"          # "c3bf" | "cbf" | "pure_pursuit"
+CONTROLLER       = "cbf"          # "c3bf" | "cbf" | "pure_pursuit"
 USE_GLOBAL_PLAN  = False            # False = UGV navigates to YAML goal directly
 PERCEPTION_MODE  = "ugv"           # "all" | "uav" | "ugv" | "merged"
 MAX_STEPS        = 800
 
 # --- Environment
-env = irsim.make("custom_world.yaml")
+env = irsim.make("Experiment1/custom_world1.yaml")
 
 # Collect UAV and UGV twins from the robot list. 
 uav_twins = [r for r in env.robot_list if isinstance(r, UAVTwin)]
 ugv_twins = [r for r in env.robot_list if isinstance(r, UGVTwin)]
 
-print(f"UAVs: {len(uav_twins)}  UGVs: {len(ugv_twins)}")
-assert uav_twins, "No UAVTwin found — check"
-assert ugv_twins, "No UGVTwin found — check"
 
 
 # --- Controllers (one per UGV) 
@@ -38,14 +35,14 @@ for ugv in ugv_twins:
     if CONTROLLER == "c3bf":
         controllers[ugv.id] = CollisionConeCBFController(
             robot_type    = ugv.kinematics,
-            safety_margin = 0.05,
+            safety_margin = 0.2,
             goal_gain     = 0.8,
         )
     elif CONTROLLER == "cbf":
         controllers[ugv.id] = CBFQPController(
             robot_type=ugv_twins[0].kinematics,
-            safety_margin=0.15,
-            cbf_alpha=2.0,
+            safety_margin=0.2,
+            cbf_alpha=1.0,
             goal_gain=0.8,
         )
     elif CONTROLLER == "pure_pursuit":
@@ -101,8 +98,8 @@ launch(
 
 """
 mission_logger.draw_mission_costs(adt)
-
+"""
 for ugv_id , metric_logger in adt._loggers.items():
     metric_logger.plot_figures()
-"""
+
 
