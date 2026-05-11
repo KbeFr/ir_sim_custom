@@ -144,6 +144,10 @@ class SimulationGUI(QMainWindow):
         self.btn_step_once.setFixedWidth(80)
         self.btn_step_once.clicked.connect(self._single_step)
 
+        btn_reset = QPushButton("⏮ Reset")
+        btn_reset.clicked.connect(self._reset_sim)
+        bar.addWidget(btn_reset)
+
         self.lbl_step = QLabel(f"Step: 0 / {self.max_steps}")
         self.lbl_step.setMinimumWidth(130)
 
@@ -249,10 +253,6 @@ class SimulationGUI(QMainWindow):
         robots_vbox.addLayout(btn_row)
         layout.addWidget(grp_robots)
         layout.addStretch()
-
-
-
-
 
         return w
 
@@ -567,6 +567,36 @@ class SimulationGUI(QMainWindow):
             self.canvas.draw_idle()
 
         self._log(f"🚫 UAV fault: hiding obj id={obj.id} from UAV perception")
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Simulation state
+    # ══════════════════════════════════════════════════════════════════════
+
+
+    def _reset_sim(self):
+        self.timer.stop()
+        self.btn_play.setChecked(False)
+        self.btn_play.setText("▶  Play")
+        self._step = 0
+        self._use_global_plan = False
+        self.lbl_step.setText(f"Step: 0 / {self.max_steps}")
+
+        # Clear per-frame artists
+        for a in self._perception_artists:
+            try: a.remove()
+            except: pass
+        self._perception_artists.clear()
+
+        # Reset UGV position tracking
+        self._ugv_traces = {ugv.id: ([], []) for ugv in self.ugv_twins}
+
+        # Reset other components 
+        self.env.reset()          
+        self.adt.reset()         
+        self.canvas.draw_idle()
+        self._log("⏮ Simulation reset.")
+
 
     # ══════════════════════════════════════════════════════════════════════
     # Simulation loop

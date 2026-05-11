@@ -39,7 +39,7 @@ class UAVTwin(ObjectBase):
         **kwargs,
     ) -> None:        
         
-        # 1. Pass all parameters up to the ObjectBase to initialize kinematics & geometry
+        # Pass all parameters up to the ObjectBase to initialize kinematics & geometry
         super().__init__(
             shape=shape, kinematics=kinematics, state=state, velocity=velocity, goal=goal,
             role=role, color=color, static=static, vel_min=vel_min, vel_max=vel_max,
@@ -50,10 +50,15 @@ class UAVTwin(ObjectBase):
             name=name, **kwargs
         )
         
-        # 2. Initialize Twin-specific properties
+        # Initialize Twin-specific properties
         self.altitude = UAV_ALTITUDE
         self.battery_status = UAV_BATTERY
     
+    
+    def reset(self):
+        super().reset()
+        self.battery_status = UAV_BATTERY
+
 
     def get_uav_view(self):
         """

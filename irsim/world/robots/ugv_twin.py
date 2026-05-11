@@ -62,6 +62,9 @@ class UGVTwin(ObjectBase):
 
         self.assigned_mission = None
 
+    def reset(self):
+        super().reset()
+        self.battery_status = UGV_BATTERY
 
     def get_ugv_view(self):
         """

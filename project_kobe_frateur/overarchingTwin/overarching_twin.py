@@ -176,6 +176,13 @@ class OverArchingTwin:
         self.grid_map.update_perception(self.percieved_obstacles)    
 
 
+
+
+    def reset(self):
+        self._sim_step = 0
+        
+
+
     """
     MAIN STEP
     """
