@@ -15,6 +15,7 @@ Usage (from custom_world.py):
 """
 
 import sys
+import os
 import numpy as np
 import matplotlib
 matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
@@ -32,7 +33,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QSlider, QLabel, QCheckBox, QGroupBox, QScrollArea,
     QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTabWidget, QTextEdit,
-    QFormLayout,QMenu
+    QFormLayout,QMenu, QListWidget , QListWidgetItem
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont, QAction
@@ -69,6 +70,15 @@ class SimulationGUI(QMainWindow):
         self._map_fig         = Figure(figsize=(6, 6), tight_layout=True)
         self._map_ax          = self._map_fig.add_subplot(111)
         self._perception_artists = []   # matplotlib patches drawn over sim canvas
+
+        self._recorded_runs  = []          # [{label, color, paths: {ugv_id: (xs,ys)}}]
+        self._ugv_traces     = {ugv.id: ([], []) for ugv in self.ugv_twins}
+        self._path_artists   = []          # overlay line artists on sim canvas
+        self._run_colors     = ['lime','cyan','magenta','yellow','red','white']
+
+        self._saved_runs   = {}   # key: unique label → {rid, xs, ys, artist}
+        self._saved_artists= {}
+
 
         self.setWindowTitle("HDT Simulation — Control Panel")
         self.resize(1440, 860)
@@ -218,32 +228,54 @@ class SimulationGUI(QMainWindow):
         layout.addWidget(grp_brdr)
 
 
-        # Per-robot checkboxes
-        grp_robots  = QGroupBox("Individual Robots")
+        # Per-robot List 
+        grp_robots = QGroupBox("Individual Robots")
         robots_vbox = QVBoxLayout(grp_robots)
 
-        scroll   = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(280)
-        inner    = QWidget()
-        in_vbox  = QVBoxLayout(inner)
-        in_vbox.setSpacing(2)
-        self._robots_inner_layout = in_vbox   # kept for dynamic add/remove
+        self.robots_list = QListWidget()
+        self.robots_list.setMaximumHeight(280)
 
-        self._robot_checks = {}
+        # Dictionary to hold references to items (useful if you need to update the "⏳" status later)
+        self._robot_items = {}
+
         for robot in self.env.robot_list:
-            lbl = f"{type(robot).__name__}  [id={robot.id}]"
-            chk = QCheckBox(lbl)
-            chk.setChecked(True)
-            chk.toggled.connect(
-                lambda checked, rid=robot.id: self._on_robot_toggle(rid, checked)
-            )
-            self._robot_checks[robot.id] = chk
-            in_vbox.addWidget(chk)
+            # Combine the name, ID, and status into the item text
+            text = f"{type(robot).__name__} [id={robot.id}]   ⏳"
+            item = QListWidgetItem(text)
+            
+            # Enable checking and selecting
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(Qt.CheckState.Checked)
+            
+            # Store the robot ID hidden inside the item's UserRole data
+            item.setData(Qt.ItemDataRole.UserRole, robot.id)
+            
+            self.robots_list.addItem(item)
+            self._robot_items[robot.id] = item
 
-        in_vbox.addStretch()
-        scroll.setWidget(inner)
-        robots_vbox.addWidget(scroll)
+        # Connect the checkbox toggle signal
+        self.robots_list.itemChanged.connect(self._on_robot_item_changed)
+
+        robots_vbox.addWidget(self.robots_list)
+        layout.addWidget(grp_robots)
+
+        # Robot Actions 
+        grp_act = QGroupBox("Robot Actions")
+        act_vbox = QVBoxLayout(grp_act)
+
+
+        btn_save_run    = QPushButton("💾  Save run (path + figures)")
+        btn_robot_reset = QPushButton("⏮  Reset this robot")
+        btn_toggle_vis  = QPushButton("👁  Toggle visibility") 
+
+        btn_save_run.clicked.connect(self._save_selected_robot_run)
+        btn_robot_reset.clicked.connect(self._reset_selected_robot)
+        btn_toggle_vis.clicked.connect(self._toggle_selected_robot_vis)
+
+        act_vbox.addWidget(btn_save_run)
+        act_vbox.addWidget(btn_robot_reset)
+        act_vbox.addWidget(btn_toggle_vis)
+        layout.addWidget(grp_act)
 
         btn_row = QHBoxLayout()
         for label, state in [("All", True), ("None", False)]:
@@ -569,6 +601,115 @@ class SimulationGUI(QMainWindow):
         self._log(f"🚫 UAV fault: hiding obj id={obj.id} from UAV perception")
 
 
+    def _on_robot_item_changed(self, item):
+        """Triggered whenever a checkbox is clicked in the robots list."""
+        # Only fire if the check state actually changed (optional check, but good practice)
+        robot_id = item.data(Qt.ItemDataRole.UserRole)
+        is_checked = (item.checkState() == Qt.CheckState.Checked)
+        
+        # Call your original toggle logic
+        self._on_robot_toggle(robot_id, is_checked)
+
+    def _get_selected_robot_id(self):
+        """Helper method to get the currently selected robot ID from the list."""
+        selected_items = self.robots_list.selectedItems()
+        if not selected_items:
+            return None
+        return selected_items[0].data(Qt.ItemDataRole.UserRole)
+
+
+    def _toggle_selected_robot_vis(self):
+        """If you still want the button to toggle visibility, it can just flip the checkbox."""
+        selected_items = self.robots_list.selectedItems()
+        if not selected_items:
+            return
+            
+        item = selected_items[0]
+        # Flip the current check state
+        new_state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+        item.setCheckState(new_state) 
+        # (Setting the check state automatically triggers _on_robot_item_changed)
+
+
+    def _save_selected_robot_run(self):
+        robot_id = self._get_selected_robot_id()
+        if robot_id is None: return
+
+        import datetime
+        rid     = robot_id
+        ts      = datetime.datetime.now().strftime("%H%M%S")
+        label   = f"{type(robot_id).__name__}_{rid}_{ts}"
+        save_dir= f"./runs/{label}"
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Save path snapshot
+        xs, ys = (list(v) for v in self._ugv_traces.get(rid, ([], [])))
+        self._saved_runs[label] = {"rid": rid, "xs": xs, "ys": ys, "artist": None}
+
+        # Save figures
+        ml = getattr(self.adt, '_loggers', {}).get(rid)
+        if ml:
+            ml.plot_figures(save_dir=save_dir, show=False, file_fmt="png")
+
+        # Save path as numpy
+        np.save(os.path.join(save_dir, "path.npy"), np.array([xs, ys]))
+
+        # Add to list widget
+        from PyQt6.QtCore import Qt
+        item = QListWidgetItem(label)
+        item.setCheckState(Qt.CheckState.Checked)
+        self.saved_runs_list.addItem(item)
+        self._log(f"💾 Saved run '{label}' → {save_dir}")
+        self._on_saved_run_toggle(item)   # draw immediately
+
+    def _reset_selected_robot(self):
+        robot = self._get_selected_robot_id()
+        if robot is None: return
+
+        robot.reset()
+        # Reinit just this robot's matplotlib patches
+        try:
+            robot.plot_clear(all=True)
+            robot._init_plot(self.env._env_plot.ax)
+        except Exception as e:
+            self._log(f"[Reset plot warn] {e}")
+
+        # Clear its trace
+        rid = robot.id
+        self._ugv_traces[rid] = ([], [])
+        self.canvas.draw_idle()
+        self._log(f"⏮ Reset robot id={rid}")
+
+    def _on_saved_run_toggle(self, item):
+        label   = item.text()
+        run     = self._saved_runs.get(label)
+        if run is None: return
+
+        # Remove old artist
+        old = run.get("artist")
+        if old:
+            try: old.remove()
+            except: pass
+            run["artist"] = None
+
+        if item.checkState() == Qt.CheckState.Checked:
+            ax   = self.env._env_plot.ax
+            xs, ys = run["xs"], run["ys"]
+            if xs:
+                color = self._run_colors[
+                    list(self._saved_runs).index(label) % len(self._run_colors)
+                ]
+                line, = ax.plot(xs, ys, '--', color=color, lw=1.5,
+                                alpha=0.8, label=label, zorder=6)
+                run["artist"] = line
+                ax.legend(loc='upper right', fontsize=7, framealpha=0.5)
+
+        self.canvas.draw_idle()
+
+
+
+
+
     # ══════════════════════════════════════════════════════════════════════
     # Simulation state
     # ══════════════════════════════════════════════════════════════════════
@@ -621,6 +762,11 @@ class SimulationGUI(QMainWindow):
         for ugv in self.ugv_twins:
             if self._use_global_plan and ugv.assigned_mission is None:
                 continue
+            
+            waypoints_remaining = len(ugv._goal) if ugv._goal else 0
+            if waypoints_remaining <= 1:
+                ugv.goal_threshold = 0.1
+
             obstacles = ugv.get_ugv_view()
             action    = self.controllers[ugv.id].get_action(ugv, obstacles)
             actions.append(action)
@@ -628,6 +774,12 @@ class SimulationGUI(QMainWindow):
 
         # 3. Physics
         self.env.step(action=actions, action_id=ids)
+
+        for ugv in self.ugv_twins:
+            xs, ys = self._ugv_traces[ugv.id]
+            xs.append(float(ugv.state.flat[0]))
+            ys.append(float(ugv.state.flat[1]))
+
 
         # 4. Render — bypass plt.pause() entirely.
         # Always pass the FULL robot list so every robot's transform is updated
@@ -651,6 +803,10 @@ class SimulationGUI(QMainWindow):
         if self._step % 15 == 0:
             self._refresh_mission_list()
 
+        if self._step % 10 == 0:
+            self._update_robot_status()
+
+
         # Auto-refresh map view
         if (self.chk_map_autorefresh.isChecked()
                 and self._step % max(1, self.map_refresh_spin.value()) == 0):
@@ -666,6 +822,26 @@ class SimulationGUI(QMainWindow):
             ep.step(objects=objects)
         except Exception as e:
             self._log(f"[render error] {e}")
+
+    def _update_robot_status(self):
+        for robot in self.env.robot_list:
+            item = self._robot_items.get(robot.id)
+            if item is None:
+                continue
+                
+            arrived = getattr(robot, 'arrive_flag', False)
+            status_text = "✅ arrived" if arrived else "⏳ moving"
+            
+            # Construct the new text string
+            # This replaces the old label.setText()
+            item.setText(f"{type(robot).__name__} [id={robot.id}]   {status_text}")
+            
+            # Optional: You can change the color of the WHOLE row text
+            if arrived:
+                item.setForeground(Qt.GlobalColor.green)
+            else:
+                item.setForeground(Qt.GlobalColor.gray)
+
 
     # ══════════════════════════════════════════════════════════════════════
     # Playback controls
