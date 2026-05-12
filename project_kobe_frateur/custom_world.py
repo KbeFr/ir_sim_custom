@@ -21,7 +21,7 @@ PERCEPTION_MODE  = "ugv"           # "all" | "uav" | "ugv" | "merged"
 MAX_STEPS        = 800
 
 # --- Environment
-env = irsim.make("Experiment1/custom_world1.yaml")
+env = irsim.make("Experiment1/world_experiment1.yaml")
 
 # Collect UAV and UGV twins from the robot list. 
 uav_twins = [r for r in env.robot_list if isinstance(r, UAVTwin)]
@@ -98,8 +98,7 @@ launch(
 
 """
 mission_logger.draw_mission_costs(adt)
-"""
 for ugv_id , metric_logger in adt._loggers.items():
     metric_logger.plot_figures()
-
+"""
 

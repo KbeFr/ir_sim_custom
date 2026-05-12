@@ -18,7 +18,7 @@ Mission , POSTURE_WEIGHTS ,DEFAULT_POSTURE)
 
 from mission_logger import MissionLogger
 from metrics_logger import MetricsLogger
-from a_star_custom import AStarPlanner
+from a_star import AStarPlanner
 
 
 class PerceptionMode(Enum):

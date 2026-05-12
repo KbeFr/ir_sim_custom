@@ -13,7 +13,7 @@ Usage (from custom_world.py):
            uav_twins=uav_twins, max_steps=MAX_STEPS, step_ms=100,
            perception_mode=PERCEPTION_MODE)
 """
-
+import os
 import sys
 import numpy as np
 import matplotlib
@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QSlider, QLabel, QCheckBox, QGroupBox, QScrollArea,
     QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTabWidget, QTextEdit,
-    QFormLayout,QMenu
+    QFormLayout,QMenu, QListWidgetItem , QListWidget
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont, QAction
@@ -69,6 +69,14 @@ class SimulationGUI(QMainWindow):
         self._map_fig         = Figure(figsize=(6, 6), tight_layout=True)
         self._map_ax          = self._map_fig.add_subplot(111)
         self._perception_artists = []   # matplotlib patches drawn over sim canvas
+
+        self._recorded_runs  = []          # [{label, color, paths: {ugv_id: (xs,ys)}}]
+        self._ugv_traces     = {ugv.id: ([], []) for ugv in self.ugv_twins}
+        self._path_artists   = []          # overlay line artists on sim canvas
+        self._run_colors     = ['lime','cyan','magenta','yellow','red','white']
+
+        self._saved_runs   = {}   # key: unique label → {rid, xs, ys, artist}
+        self._saved_artists= {}
 
         self.setWindowTitle("HDT Simulation — Control Panel")
         self.resize(1440, 860)
@@ -230,20 +238,33 @@ class SimulationGUI(QMainWindow):
         in_vbox.setSpacing(2)
         self._robots_inner_layout = in_vbox   # kept for dynamic add/remove
 
+        self._robot_status_labels = {}
         self._robot_checks = {}
+
         for robot in self.env.robot_list:
-            lbl = f"{type(robot).__name__}  [id={robot.id}]"
-            chk = QCheckBox(lbl)
+            row    = QWidget()
+            hbox   = QHBoxLayout(row)
+            hbox.setContentsMargins(0, 0, 0, 0)
+
+            chk = QCheckBox(f"{type(robot).__name__} [id={robot.id}]")
             chk.setChecked(True)
-            chk.toggled.connect(
-                lambda checked, rid=robot.id: self._on_robot_toggle(rid, checked)
-            )
+            chk.toggled.connect(lambda checked, rid=robot.id: self._on_robot_toggle(rid, checked))
             self._robot_checks[robot.id] = chk
-            in_vbox.addWidget(chk)
+
+            lbl = QLabel("⏳")
+            lbl.setFixedWidth(60)
+            lbl.setStyleSheet("color: gray; font-size: 9px;")
+            self._robot_status_labels[robot.id] = lbl
+
+            hbox.addWidget(chk)
+            hbox.addWidget(lbl)
+            in_vbox.addWidget(row)
 
         in_vbox.addStretch()
         scroll.setWidget(inner)
         robots_vbox.addWidget(scroll)
+
+
 
         btn_row = QHBoxLayout()
         for label, state in [("All", True), ("None", False)]:
@@ -252,6 +273,17 @@ class SimulationGUI(QMainWindow):
             btn_row.addWidget(btn)
         robots_vbox.addLayout(btn_row)
         layout.addWidget(grp_robots)
+
+        # Saved runs list
+        grp_saved  = QGroupBox("Saved Runs")
+        saved_vbox = QVBoxLayout(grp_saved)
+        self.saved_runs_list = QListWidget()
+        self.saved_runs_list.itemChanged.connect(self._on_saved_run_toggle)
+        saved_vbox.addWidget(self.saved_runs_list)
+        layout.addWidget(grp_saved)
+
+
+
         layout.addStretch()
 
         return w
@@ -304,22 +336,30 @@ class SimulationGUI(QMainWindow):
         btn_spawn = QPushButton("🚀  Spawn Robot")
         btn_spawn.clicked.connect(self._spawn_robot)
 
-        # ── Delete ─────────────────────────────────────────────────────────
-        grp_del   = QGroupBox("Delete Robot")
-        del_vbox  = QVBoxLayout(grp_del)
+        # ── Robot Actions ─────────────────────────────────────────────────────────
+        grp_act   = QGroupBox("Robot Actions")
+        act_vbox  = QVBoxLayout(grp_act)
 
-        self.del_combo = QComboBox()
+        self.act_combo = QComboBox()
         self._refresh_delete_combo()
 
+        act_vbox.addWidget(self.act_combo)
+
+        btn_save_run   = QPushButton("💾  Save run (path + figures)")
+        btn_robot_reset= QPushButton("⏮  Reset Selected")
         btn_del = QPushButton("🗑  Delete Selected")
+
+        btn_save_run.clicked.connect(self._save_robot_run)
+        btn_robot_reset.clicked.connect(self._reset_single_robot)
         btn_del.clicked.connect(self._delete_robot)
 
-        del_vbox.addWidget(self.del_combo)
-        del_vbox.addWidget(btn_del)
+        act_vbox.addWidget(btn_save_run)
+        act_vbox.addWidget(btn_robot_reset)
+        act_vbox.addWidget(btn_del)
 
         layout.addWidget(grp_spawn)
         layout.addWidget(btn_spawn)
-        layout.addWidget(grp_del)
+        layout.addWidget(grp_act)
         layout.addStretch()
         return w
 
@@ -497,19 +537,11 @@ class SimulationGUI(QMainWindow):
         ))
 
     def _delete_by_obj(self, obj):
-        #Find the object
-
-        # Perform the actual deletion in the environment
-        self.env.delete_object(obj.id)
-
-        # Handle UI updates if it was a robot
-        if getattr(obj, 'role', None) == "robot":
-            self._refresh_robot_panel_by_id(obj.id, remove=True)
-            self._refresh_delete_combo()
-        
-        # Refresh visuals
-        self._draw_perception_highlights()
-        self.canvas.draw_idle()
+        # Select it in combo then reuse _delete_robot
+        idx = self.act_combo.findData(obj.id)
+        if idx >= 0:
+            self.act_combo.setCurrentIndex(idx)
+        self._delete_robot()
 
     def _toggle_visible_by_obj(self, obj):
 
@@ -567,6 +599,97 @@ class SimulationGUI(QMainWindow):
             self.canvas.draw_idle()
 
         self._log(f"🚫 UAV fault: hiding obj id={obj.id} from UAV perception")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Robot selection
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _get_selected_robot(self):
+        rid = self.act_combo.currentData()
+        return next((r for r in self.env.robot_list if r.id == rid), None)
+
+    def _toggle_selected_robot_vis(self):
+        robot = self._get_selected_robot()
+        if robot:
+            chk = self._robot_checks.get(robot.id)
+            if chk: chk.setChecked(not chk.isChecked())
+
+    def _save_robot_run(self):
+        robot = self._get_selected_robot()
+        if robot is None: return
+
+        import datetime
+        rid     = robot.id
+        ts      = datetime.datetime.now().strftime("%H%M%S")
+        label   = f"{type(robot).__name__}_{rid}_{ts}"
+        save_dir= f"./runs/{label}"
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Save path snapshot
+        xs, ys = (list(v) for v in self._ugv_traces.get(rid, ([], [])))
+        self._saved_runs[label] = {"rid": rid, "xs": xs, "ys": ys, "artist": None}
+
+        # Save figures
+        ml = getattr(self.adt, '_loggers', {}).get(rid)
+        if ml:
+            ml.plot_figures(save_dir=save_dir, show=False, file_fmt="png")
+
+        # Save path as numpy
+        np.save(os.path.join(save_dir, "path.npy"), np.array([xs, ys]))
+
+        # Add to list widget
+        from PyQt6.QtCore import Qt
+        item = QListWidgetItem(label)
+        item.setCheckState(Qt.CheckState.Checked)
+        self.saved_runs_list.addItem(item)
+        self._log(f"💾 Saved run '{label}' → {save_dir}")
+        self._on_saved_run_toggle(item)   # draw immediately
+
+    def _reset_single_robot(self):
+        robot = self._get_selected_robot()
+        if robot is None: return
+
+        robot.reset()
+        # Reinit just this robot's matplotlib patches
+        try:
+            self.env.step(action=[np.zeros((2, 1))], action_id=[rid])
+            robot.plot_clear(all=True)
+            robot._init_plot(self.env._env_plot.ax)
+        except Exception as e:
+            self._log(f"[Reset plot warn] {e}")
+
+        # Clear its trace
+        rid = robot.id
+        self._ugv_traces[rid] = ([], [])
+        self.canvas.draw_idle()
+        self._log(f"⏮ Reset robot id={rid}")
+
+    def _on_saved_run_toggle(self, item):
+        from PyQt6.QtCore import Qt
+        label   = item.text()
+        run     = self._saved_runs.get(label)
+        if run is None: return
+
+        # Remove old artist
+        old = run.get("artist")
+        if old:
+            try: old.remove()
+            except: pass
+            run["artist"] = None
+
+        if item.checkState() == Qt.CheckState.Checked:
+            ax   = self.env._env_plot.ax
+            xs, ys = run["xs"], run["ys"]
+            if xs:
+                color = self._run_colors[
+                    list(self._saved_runs).index(label) % len(self._run_colors)
+                ]
+                line, = ax.plot(xs, ys, '--', color=color, lw=1.5,
+                                alpha=0.8, label=label, zorder=6)
+                run["artist"] = line
+                ax.legend(loc='upper right', fontsize=7, framealpha=0.5)
+
+        self.canvas.draw_idle()
 
 
     # ══════════════════════════════════════════════════════════════════════
@@ -629,6 +752,11 @@ class SimulationGUI(QMainWindow):
         # 3. Physics
         self.env.step(action=actions, action_id=ids)
 
+        for ugv in self.ugv_twins:
+            xs, ys = self._ugv_traces[ugv.id]
+            xs.append(float(ugv.state.flat[0]))
+            ys.append(float(ugv.state.flat[1]))
+
         # 4. Render — bypass plt.pause() entirely.
         # Always pass the FULL robot list so every robot's transform is updated
         # each frame (patches use set_transform, not remove+redraw).
@@ -651,10 +779,28 @@ class SimulationGUI(QMainWindow):
         if self._step % 15 == 0:
             self._refresh_mission_list()
 
+        if self._step % 10 == 0:
+            self._update_robot_status()
+
+
         # Auto-refresh map view
         if (self.chk_map_autorefresh.isChecked()
                 and self._step % max(1, self.map_refresh_spin.value()) == 0):
             self._render_map_layer()
+
+
+    def _update_robot_status(self):
+        for robot in self.env.robot_list:
+            lbl = self._robot_status_labels.get(robot.id)
+            if lbl is None:
+                continue
+            arrived = getattr(robot, 'arrive_flag', False)
+            lbl.setText("✅ arrived" if arrived else "⏳ moving")
+            lbl.setStyleSheet(
+                "color: green; font-size: 9px;" if arrived
+                else "color: gray; font-size: 9px;"
+            )
+
 
     def _env_plot_step(self, objects):
         """
@@ -1144,33 +1290,37 @@ class SimulationGUI(QMainWindow):
           2. Remove from twin lists and controllers
           3. Remove GUI checkbox
         """
-        text = self.del_combo.currentText()
-        if not text:
-            return
-        try:
-            # combo text format: "TypeName [id=N]"
-            rid = int(text.split("id=")[1].rstrip("]"))
-        except (IndexError, ValueError):
-            self._log(f"[Delete error] Cannot parse id from '{text}'")
-            return
-
-        robot = next((r for r in self.env.robot_list if r.id == rid), None)
+        robot = self._get_selected_robot()
         if robot is None:
-            self._log(f"[Delete] Robot id={rid} not found")
+            self._log(f"[Delete] Robot id={robot.id} not found")
             return
 
+        rid = robot.id
+        print("deletecalled")
         # env.delete_object handles plot_clear + _objects removal + build_tree
         self.env.delete_object(rid)
 
-        # Clean up twin lists and controllers
+        self.env.delete_object(rid)
         self.ugv_twins  = [r for r in self.ugv_twins  if r.id != rid]
         self.uav_twins  = [r for r in self.uav_twins  if r.id != rid]
         self.controllers.pop(rid, None)
+        self._visibility_robots.pop(rid, None)
 
-        self._refresh_robot_panel(robot, add=False)
+        # Remove checkbox row
+        chk = self._robot_checks.pop(rid, None)
+        if chk:
+            # chk is the QCheckBox; its parent is the row QWidget
+            row = chk.parent()
+            if row:
+                row.deleteLater()
+            else:
+                chk.deleteLater()
+
+        self._robot_status_labels.pop(rid, None)
         self._refresh_delete_combo()
+        self._draw_perception_highlights()
         self.canvas.draw_idle()
-        self._log(f"🗑  Deleted robot '{getattr(robot, 'name', rid)}' [id={rid}]")
+        self._log(f"🗑 Deleted robot id={rid}")
 
     def _refresh_robot_panel(self, robot, add: bool):
         """Add or remove a robot's checkbox in the Visibility tab scroll area."""
@@ -1196,9 +1346,10 @@ class SimulationGUI(QMainWindow):
 
     def _refresh_delete_combo(self):
         """Repopulate the delete dropdown from the current robot list."""
-        self.del_combo.clear()
+        self.act_combo.clear()
         for r in self.env.robot_list:
-            self.del_combo.addItem(f"{type(r).__name__}  [id={r.id}]  '{getattr(r,'name','')}'" )
+            label = f"{type(r).__name__}  [id={r.id}]  '{getattr(r,'name','')}'"
+            self.act_combo.addItem(label, r.id)  
 
     # ══════════════════════════════════════════════════════════════════════
     # Mission controls
