@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QSlider, QLabel, QCheckBox, QGroupBox, QScrollArea,
     QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTabWidget, QTextEdit,
-    QFormLayout,QMenu, QListWidgetItem , QListWidget
+    QFormLayout,QMenu, QListWidgetItem , QListWidget,QFileDialog
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont, QAction
@@ -118,7 +118,7 @@ class SimulationGUI(QMainWindow):
         sim_vbox    = QVBoxLayout(sim_widget)
         sim_vbox.setContentsMargins(0, 0, 0, 0)
         self.canvas = FigureCanvasQTAgg(self.env._env_plot.fig)
-        sim_toolbar = NavigationToolbar2QT(self.canvas, sim_widget)
+        sim_toolbar = CustomNavigationToolbar(self.canvas, sim_widget, self.export_active_view)
         sim_vbox.addWidget(sim_toolbar)
         sim_vbox.addWidget(self.canvas, stretch=1)
 
@@ -129,17 +129,21 @@ class SimulationGUI(QMainWindow):
         map_vbox    = QVBoxLayout(map_widget)
         map_vbox.setContentsMargins(0, 0, 0, 0)
         self.map_canvas  = FigureCanvasQTAgg(self._map_fig)
-        map_toolbar      = NavigationToolbar2QT(self.map_canvas, map_widget)
+        map_toolbar      = CustomNavigationToolbar(self.map_canvas, map_widget,self.export_active_view)
         map_vbox.addWidget(map_toolbar)
         map_vbox.addWidget(self.map_canvas, stretch=1)
 
         self._canvas_tabs.addTab(sim_widget, "🌐  Simulation")
         self._canvas_tabs.addTab(map_widget, "🗺  Map View")
 
+        export_btn = QPushButton("Export Current View")
+        export_btn.clicked.connect(self.export_active_view)
+
         vbox.addWidget(self._canvas_tabs, stretch=1)
+        vbox.addWidget(export_btn)
         vbox.addLayout(self._build_playback_bar())
         return panel
-
+    
     def _build_playback_bar(self):
         bar = QHBoxLayout()
 
@@ -599,6 +603,44 @@ class SimulationGUI(QMainWindow):
             self.canvas.draw_idle()
 
         self._log(f"🚫 UAV fault: hiding obj id={obj.id} from UAV perception")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Figure Export (high res)
+    # ══════════════════════════════════════════════════════════════════════
+
+    def export_active_view(self):
+        """Exports the currently visible tab as a High-Res PNG or PDF."""
+        
+        # Determine which tab is active
+        current_tab = self._canvas_tabs.currentIndex()
+        
+        if current_tab == 0:
+            fig_to_save = self.env._env_plot.fig
+            default_name = "simulation_view.pdf"
+        elif current_tab == 1:
+            fig_to_save = self._map_fig
+            default_name = "map_view.pdf"
+        else:
+            return # Safety catch
+
+        # Open the Save Dialog
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            None, 
+            "Export Current View", 
+            default_name, 
+            "Vector PDF (*.pdf);;High-Res PNG (*.png)"
+        )
+
+        # Save the file if the user didn't cancel
+        if file_path:
+            if file_path.endswith('.png'):
+                # PNG is a raster format, so it needs the high DPI multiplier
+                fig_to_save.savefig(file_path, dpi=300, bbox_inches='tight')
+            else:
+                # PDF is a vector format. DPI doesn't matter for the drawn lines/shapes!
+                fig_to_save.savefig(file_path, bbox_inches='tight')
+                
+            print(f"Successfully exported to: {file_path}")
 
     # ══════════════════════════════════════════════════════════════════════
     # Robot selection
@@ -1428,3 +1470,31 @@ def launch(env, adt, ugv_twins, controllers, uav_twins,
     )
     gui.show()
     app.exec()   # blocks here; returns when window is closed
+
+
+class CustomNavigationToolbar(NavigationToolbar2QT):
+
+    def __init__(self, canvas, parent, custom_save_callback=None):
+        super().__init__(canvas, parent)
+        self.custom_save_callback = custom_save_callback
+
+    # toolitems needed to display
+    toolitems = (
+        ('Home', 'Reset original view', 'home', 'home'),
+        ('Back', 'Back to previous view', 'back', 'back'),
+        ('Forward', 'Forward to next view', 'forward', 'forward'),
+        (None, None, None, None),
+        ('Pan', 'Pan axes with left mouse, zoom with right', 'move', 'pan'),
+        ('Zoom', 'Zoom to rectangle', 'zoom_to_rect', 'zoom'),
+        (None, None, None, None),
+        ('Save', 'Save the figure', 'filesave', 'save_figure'), # <-- Uncommented!
+    )
+
+
+    # called when save is clicked
+    def save_figure(self, *args):
+        if self.custom_save_callback:
+            self.custom_save_callback()
+        else:
+            # Fallback to default Matplotlib save dialog if no callback was provided
+            super().save_figure(*args)

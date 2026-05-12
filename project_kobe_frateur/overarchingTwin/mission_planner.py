@@ -205,9 +205,9 @@ class MissionPlanner:
         path = self._planner.planning(
             start_pose     = start,
             goal_pose      = goal,
-            #weights        = weights,
-            #global_grid_map   = self._grid_map,
-            #ugv            = ugv,
+            weights        = weights,
+            global_grid_map   = self._grid_map,
+            ugv            = ugv,
             show_animation = False,
         )
         return path, 1
