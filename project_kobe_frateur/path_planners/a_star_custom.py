@@ -21,13 +21,12 @@ import math
 
 import matplotlib.pyplot as plt
 import numpy as np
+from overarching_twin.grid_map import GlobalGridMap
 
 from irsim.lib.handler.geometry_handler import GeometryFactory
 from irsim.util.util import to_numpy
 from irsim.world.map import EnvGridMap
 from irsim.world.robots.ugv_twin import UGVTwin
-
-from ..overarching_twin.grid_map import GlobalGridMap
 
 
 class AStarPlanner:

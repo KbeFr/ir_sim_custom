@@ -4,18 +4,22 @@ import math
 from enum import Enum
 
 import numpy as np
+from loggers.metrics_logger import MetricsLogger
+from loggers.mission_logger import MissionLogger
+from overarching_twin.grid_map import GlobalGridMap
+from overarching_twin.mission import (
+    DEFAULT_POSTURE,
+    POSTURE_WEIGHTS,
+    Mission,
+    MissionPosture,
+)
+from overarching_twin.mission_planner import MissionPlanner
+from overarching_twin.uav_fleet_dt import UAVFleetDT
+from path_planners.a_star import AStarPlanner
 
 from irsim.env.env_base import EnvBase
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
-
-from ..loggers.metrics_logger import MetricsLogger
-from ..loggers.mission_logger import MissionLogger
-from ..path_planners.a_star import AStarPlanner
-from .grid_map import GlobalGridMap
-from .mission import DEFAULT_POSTURE, POSTURE_WEIGHTS, Mission
-from .mission_planner import MissionPlanner
-from .uav_fleet_dt import UAVFleetDT
 
 
 class PerceptionMode(Enum):
@@ -80,7 +84,7 @@ class OverArchingTwin:
 
         # --- mission planner
         self.missions: list[Mission] = []
-        self._posture: str = DEFAULT_POSTURE
+        self._posture: MissionPosture = DEFAULT_POSTURE
         self._sim_step: int = 0
 
         self._dt: float = 0.1

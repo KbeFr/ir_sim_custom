@@ -6,14 +6,13 @@ from local_controllers.c3bf_qp import CollisionConeCBFController
 from local_controllers.cbf_qp import CBFQPController
 from local_controllers.local_planners import PurePursuitController
 from loggers.mission_logger import MissionLogger
+from overarching_twin.mission import Mission, MissionType
 from overarching_twin.overarching_twin import OverArchingTwin
+from simulation_gui import launch
 
 import irsim
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
-
-from .overarching_twin.mission import Mission, MissionType
-from .simulation_gui import launch
 
 # ---  Config
 CONTROLLER       = "cbf"          # "c3bf" | "cbf" | "pure_pursuit"
@@ -22,7 +21,7 @@ PERCEPTION_MODE  = "ugv"           # "all" | "uav" | "ugv" | "merged"
 MAX_STEPS        = 800
 
 # --- Environment
-env = irsim.make("Experiment1/world_experiment1.yaml")
+env = irsim.make("project_kobe_frateur/experiments/Experiment1/world_experiment1.yaml")
 
 # Collect UAV and UGV twins from the robot list.
 uav_twins = [r for r in env.robot_list if isinstance(r, UAVTwin)]

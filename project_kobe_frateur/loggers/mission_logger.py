@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-
-from ..overarching_twin.mission import POSTURE_WEIGHTS
+from overarching_twin.mission import POSTURE_WEIGHTS
 
 
 class MissionLogger:

@@ -11,14 +11,12 @@ import math
 import time
 
 import numpy as np
-
-from project_kobe_frateur.overarching_twin.mission import (
+from loggers.mission_logger import MissionLogger
+from overarching_twin.mission import (
     POSTURE_WEIGHTS,
     Mission,
     MissionType,
 )
-
-from ..loggers.mission_logger import MissionLogger
 
 
 class MissionPlanner:
