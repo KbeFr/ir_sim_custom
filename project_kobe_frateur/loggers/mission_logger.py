@@ -13,9 +13,9 @@ class MissionLogger:
 
     def update_per_mission_log(self, mission_id, ugv_id, path, cost, assigned_cost):
         ugv_mission_spec = {
-            "id": ugv_id, 
-            "path": path, 
-            "cost": cost, 
+            "id": ugv_id,
+            "path": path,
+            "cost": cost,
             "cost_assigned": assigned_cost
         }
 
