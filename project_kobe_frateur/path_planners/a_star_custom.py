@@ -25,7 +25,7 @@ import numpy as np
 from irsim.lib.handler.geometry_handler import GeometryFactory
 from irsim.util.util import to_numpy
 from irsim.world.map import EnvGridMap
-from overarchingTwin.grid_map import GlobalGridMap
+from project_kobe_frateur.overarching_twin.grid_map import GlobalGridMap
 from irsim.world.robots.ugv_twin import UGVTwin
 
 class AStarPlanner:

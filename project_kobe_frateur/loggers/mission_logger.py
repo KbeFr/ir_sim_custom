@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from overarchingTwin.mission import POSTURE_WEIGHTS
+from project_kobe_frateur.overarching_twin.mission import POSTURE_WEIGHTS
 from dataclasses import dataclass, field
 
 
@@ -77,7 +77,7 @@ class MissionLogger:
                 uid = ugv_plan["id"]
 
                 # Safely find the corresponding UGV object in the OverArchingTwin
-                ugv = next((u for u in adt._ugvs if getattr(u, 'id', str(id(u))) == uid), None)
+                ugv = next((u for u in adt.active_ugvs if getattr(u, 'id', str(id(u))) == uid), None)
                 
                 if not ugv:
                     ax.set_title(f"UGV {uid} Not Found")

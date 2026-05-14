@@ -2,26 +2,26 @@ from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
 
 
-
 class UAVFleetDT:
     """
     Aggregates obstacle detections and coverage footprints from all UAVs.
     """
 
     def __init__(self, uavs: list[UAVTwin] | UAVTwin) -> None:
-        self.uavs = uavs if isinstance(uavs, list) else [uavs]
-        #Objects that hidden for fault injection
+        self._all_uavs = uavs if isinstance(uavs, list) else [uavs]
+
+        # Objects that hidden for fault injection
         self.hidden_objects = set()
-    
+
     def get_uavs_view(self) -> list[dict]:
         obstacles = []
         for uav in self.uavs:
             obstacles.extend(uav.get_uav_view())
         # Convert to set for high-speed lookups
         hidden_set = self.hidden_objects
-        
+
         return [obj for obj in obstacles if obj not in hidden_set]
-    
+
     """For real position return, not nessesary yet
     def get_uav_view(self) -> list[dict]:
         #Merged obstacle detections, deduped by id.
@@ -31,7 +31,7 @@ class UAVFleetDT:
                 seen[obj["id"]] = obj
         return list(seen.values())
     """
-        
+
     def get_coverage_geometry(self) -> list:
         """Shapely geometries of all active UAV camera footprints."""
         geoms = []
@@ -48,5 +48,10 @@ class UAVFleetDT:
         for uav in self.uavs:
             uav.sensor_step()
 
-
-    
+    @property
+    def uavs(self) -> list[UGVTwin]:
+        """
+        Dynamically returns only the UAVs that are unobstructed/active.
+        This prevents having to check visibility in every single loop.
+        """
+        return [u for u in self._all_uavs if not getattr(u, 'unobstructed', False)]

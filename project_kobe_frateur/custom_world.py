@@ -2,17 +2,17 @@ import matplotlib
 matplotlib.use("QtAgg")
 import irsim
 
-from overarchingTwin.overarching_twin import OverArchingTwin
-from overarchingTwin.mission_planner import Mission, MissionType
+from overarching_twin.overarching_twin import OverArchingTwin
+from project_kobe_frateur.overarching_twin.mission import Mission, MissionType
 
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
-from local_planners.c3bf_qp import CollisionConeCBFController
-from local_planners.cbf_qp import CBFQPController
-from local_planners.local_planners import PurePursuitController
-from mission_logger import MissionLogger
+from project_kobe_frateur.local_planners.c3bf_qp import CollisionConeCBFController
+from project_kobe_frateur.local_planners.cbf_qp import CBFQPController
+from project_kobe_frateur.local_planners.local_planners import PurePursuitController
+from project_kobe_frateur.mission_logger import MissionLogger
 
-from simulation_gui import launch
+from project_kobe_frateur.simulation_gui import launch
 
 # ---  Config 
 CONTROLLER       = "cbf"          # "c3bf" | "cbf" | "pure_pursuit"
@@ -101,4 +101,3 @@ mission_logger.draw_mission_costs(adt)
 for ugv_id , metric_logger in adt._loggers.items():
     metric_logger.plot_figures()
 """
-

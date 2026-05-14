@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import time
 import math
-from overarchingTwin.mission import Mission, MissionType,POSTURE_WEIGHTS
+from project_kobe_frateur.overarching_twin.mission import Mission, MissionType,POSTURE_WEIGHTS
 
 import numpy as np
 
-from mission_logger import MissionLogger
+from project_kobe_frateur.mission_logger import MissionLogger
 
 
 class MissionPlanner:
@@ -205,9 +205,9 @@ class MissionPlanner:
         path = self._planner.planning(
             start_pose     = start,
             goal_pose      = goal,
-            weights        = weights,
-            global_grid_map   = self._grid_map,
-            ugv            = ugv,
+            #weights        = weights,
+            #global_grid_map   = self._grid_map,
+            #ugv            = ugv,
             show_animation = False,
         )
         return path, 1

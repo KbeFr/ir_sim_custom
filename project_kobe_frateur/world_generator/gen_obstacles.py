@@ -3,7 +3,12 @@
 Generate random obstacle configurations for robotic simulation.
 Usage: python gen_obstacles.py [options]
 """
-import argparse, random, math, yaml
+import argparse
+import math
+import random
+
+import yaml
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Generate random obstacles for robot sim")
