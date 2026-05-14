@@ -13,6 +13,7 @@ import time
 import numpy as np
 from matplotlib.path import Path
 from shapely.geometry import Point
+
 from irsim.world.map import Map
 
 
@@ -21,7 +22,7 @@ class GlobalGridMap:
     Static occupancy grid + per-cell traversal cost map.
 
     One instance is shared across all UGVs.  Per-robot variables (mass,
-    speed, payload) are passed as arguments to cell_cost() 
+    speed, payload) are passed as arguments to cell_cost()
 
     Parameters
     ----------
@@ -31,10 +32,10 @@ class GlobalGridMap:
         ir-sim obstacle objects (static + dynamic mixed; dynamic ones are
         filtered out automatically by _is_dynamic()).
     resolution : float
-        Grid cell edge length in metres.  0.3–0.5 m is sensible for a 40 m world.
+        Grid cell edge length in metres.  0.3-0.5 m is sensible for a 40 m world.
     """
 
-    # --- Uncertainty constants  
+    # --- Uncertainty constants
     UNCERTAINTY_COVERED   = 0.02   # m²  — aerial position fix available
     UNCERTAINTY_UNCOVERED = 2.00   # m²  — dead-reckoning drift
 
@@ -53,7 +54,7 @@ class GlobalGridMap:
         self._W, self._H, self._ox, self._oy = world_specs
         self.obstacle_list = obstacle_list
 
-        self._occ: np.ndarray = self._create_occupancy_grid()  
+        self._occ: np.ndarray = self._create_occupancy_grid()
 
         self.nx, self.ny = self._occ.shape
         self._risk: np.ndarray = self._build_risk_layer()
@@ -69,11 +70,11 @@ class GlobalGridMap:
         )
 
 
-    # --- Properties 
+    # --- Properties
 
     @property
     def grid(self) -> np.ndarray:
-        """Occupancy grid (nx × ny), values 0 (free) or 100 (obstacle)."""
+        """Occupancy grid (nx x ny), values 0 (free) or 100 (obstacle)."""
         return self._occ
 
     @property
@@ -84,7 +85,7 @@ class GlobalGridMap:
 
 
 
-    # --- Coverage update 
+    # --- Coverage update
 
     def update_coverage(self, coverage_geometries: list) -> None:
         """
@@ -121,11 +122,11 @@ class GlobalGridMap:
             points = np.c_[cx.ravel(), cy.ravel()]
             mask   = Path(vertices).contains_points(points)
 
-            new_coverage.update(zip(ii.ravel()[mask], jj.ravel()[mask]))
+            new_coverage.update(zip(ii.ravel()[mask], jj.ravel()[mask], strict=False))
 
         self._coverage = new_coverage
 
-    # --- Cost function 
+    # --- Cost function
 
     def cell_cost(
         self,
@@ -226,18 +227,18 @@ class GlobalGridMap:
             """
             Update the map based on newly perceived obstacles.
             """
-            # update the obstacle list 
+            # update the obstacle list
             self.obstacle_list = perceived_obstacles
-            
+
             # Re-rasterize grid and risk layers
             self._occ = self._create_occupancy_grid()
             self._risk = self._build_risk_layer()
-            
-            # Update the ir-sim Map object 
+
+            # Update the ir-sim Map object
             self.env_map.obstacle_list = self.obstacle_list
             self.env_map.grid = self._occ
-            
-    # --- Coordinate helpers 
+
+    # --- Coordinate helpers
 
     def world_to_cell(self, x: float, y: float) -> tuple[int, int]:
         gx = int(np.clip((x - self._ox) / self.res, 0, self.nx - 1))
@@ -251,7 +252,7 @@ class GlobalGridMap:
         )
 
 
-    # --- Private helpers 
+    # --- Private helpers
 
     def _create_occupancy_grid(self) -> np.ndarray:
         """
@@ -260,12 +261,12 @@ class GlobalGridMap:
         Robot-radius clearance is added via isotropic binary dilation.
         """
 
-        #Time the rasterization for possible optimization 
+        #Time the rasterization for possible optimization
         print("[GlobalGridMap] Rasterising static obstacles…")
         t0 = time.perf_counter()
 
-        nx = int(round(self._W / self.res))
-        ny = int(round(self._H / self.res))
+        nx = round(self._W / self.res)
+        ny = round(self._H / self.res)
         grid = np.zeros((nx, ny), dtype=np.float64)
 
         for obs in self.obstacle_list:
@@ -278,7 +279,7 @@ class GlobalGridMap:
             geom = obs._geometry
             if geom is None:
                 continue
-            
+
             minx, miny, maxx, maxy = geom.bounds
             i0 = max(0,    int((minx - self._ox) / self.res) - 1)
             i1 = min(nx-1, int((maxx - self._ox) / self.res) + 1)
@@ -294,7 +295,7 @@ class GlobalGridMap:
 
         # Robot-radius clearance (isotropic binary dilation)
         robot_r   = 0.22
-        n_inflate = int(math.ceil(robot_r / self.res))
+        n_inflate = math.ceil(robot_r / self.res)
         if n_inflate > 0:
             try:
                 from scipy.ndimage import binary_dilation
@@ -320,7 +321,7 @@ class GlobalGridMap:
         Gradient soft-cost around obstacle cells.  Built once after _rasterise.
         """
         risk  = np.zeros((self.nx, self.ny), dtype=np.float64)
-        inf_n = int(math.ceil(self.RISK_RADIUS / self.res))
+        inf_n = math.ceil(self.RISK_RADIUS / self.res)
 
         for ox, oy in np.argwhere(self._occ > 50):
             for i in range(max(0, ox - inf_n), min(self.nx, ox + inf_n + 1)):
@@ -338,7 +339,4 @@ class GlobalGridMap:
         if getattr(obs, 'behavior', None) is not None:
             return True
         vel_max = getattr(obs, 'vel_max', None)
-        if vel_max is not None:
-            if np.any(np.abs(np.array(vel_max).flatten()) > 1e-6):
-                return True
-        return False
+        return bool(vel_max is not None and np.any(np.abs(np.array(vel_max).flatten()) > 1e-06))

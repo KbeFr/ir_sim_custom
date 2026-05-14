@@ -1,10 +1,11 @@
 import numpy as np
 
+
 class APFController:
     """
     Artificial Potential Field (APF) Local Planner.
     The goal attracts the robot, while obstacles repel it.
-    
+
     Great for demonstrating local minima in U-shaped obstacles!
     (Assumes Omnidirectional Kinematics)
     """
@@ -30,10 +31,10 @@ class APFController:
             # Ignore unobstructed or invalid objects
             if getattr(obs, 'unobstructed', False):
                 continue
-                
+
             obs_pos = obs.state[:2, 0]
             dist = np.linalg.norm(pos - obs_pos)
-            
+
             # Approximate the safe distance using the radii of both objects
             # (Works as a safe fallback even for rectangular objects)
             obs_radius = getattr(obs, 'radius', 1.0)
@@ -62,7 +63,7 @@ class PurePursuitController:
     """
     Simple Waypoint Follower.
     Blindly drives toward the target waypoint, ignoring obstacles entirely.
-    
+
     Use this to prove that your Global Planner's path is flawless.
     (Assumes Omnidirectional Kinematics)
     """
@@ -86,7 +87,7 @@ class PurePursuitController:
 
         # Proportional control
         vel = self.k_p * direction
-        
+
         # Cap to max speed
         speed = np.linalg.norm(vel)
         if speed > self.max_speed:

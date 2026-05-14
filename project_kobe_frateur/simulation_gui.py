@@ -22,32 +22,48 @@ import numpy as np
 
 matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.collections import PatchCollection
+from matplotlib.colors import to_rgba
+from matplotlib.figure import Figure
+from matplotlib.patches import Circle, Polygon
+from overarching_twin.mission import MissionPosture
+from overarching_twin.mission_planner import Mission, MissionType
+from overarching_twin.overarching_twin import PerceptionMode
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QAction, QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+from shapely import Point
 
 plt.rc('axes', labelsize=15)    # Font size of the x and y axis labels ("x [m]", "y [m]")
 plt.rc('xtick', labelsize=13)   # Font size of the x-axis tick numbers
 plt.rc('ytick', labelsize=13)   # Font size of the y-axis tick numbers
 plt.rc('font', size=13)         # General default font size
 plt.rc('axes', titlesize=16)     # Font size for the title above the axes
-
-from matplotlib.figure import Figure  # noqa: I001
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.patches import Polygon, Circle
-from matplotlib.colors import to_rgba
-from matplotlib.collections import PatchCollection
-from shapely import Point
-from project_kobe_frateur.overarching_twin.overarching_twin import PerceptionMode
-from project_kobe_frateur.overarching_twin.mission import MissionPosture
-
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QSlider, QLabel, QCheckBox, QGroupBox, QScrollArea,
-    QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTabWidget, QTextEdit,
-    QFormLayout, QMenu, QListWidgetItem, QListWidget, QFileDialog, QInputDialog
-)
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QFont, QAction
-
-from overarching_twin.mission_planner import Mission, MissionType
 
 
 class SimulationGUI(QMainWindow):

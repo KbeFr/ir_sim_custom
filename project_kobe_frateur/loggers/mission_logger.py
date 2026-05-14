@@ -1,13 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from project_kobe_frateur.overarching_twin.mission import POSTURE_WEIGHTS
-from dataclasses import dataclass, field
 
-
+from ..overarching_twin.mission import POSTURE_WEIGHTS
 
 
 class MissionLogger:
-    
     def __init__(self  ):
         self._per_mission_log: dict = {}
         self._per_mission_assignement_log = {}
@@ -42,10 +39,10 @@ class MissionLogger:
 
 
 
-        
+
     def draw_mission_costs(self , adt  ):
         """Draws one figure per mission, containing subplots for each UGV evaluated."""
-        
+
         grid_map = adt.grid_map
 
         # Calculate spatial extents so the cost map aligns with real-world X/Y path coordinates
@@ -54,22 +51,21 @@ class MissionLogger:
         extent = [ox, ox + W, oy, oy + H]
 
         for mission_id, ugv_logs in self._per_mission_log.items():
-            
+
             # Safely fetch the mission object
             mission = next((m for m in adt.missions if m.mission_id == mission_id), None)
             if not mission:
                 print(f"[MissionLogger] Warning: Mission {mission_id} not found.")
                 continue
-                
-            #  fetch weights 
+
+            #  fetch weights
             weights = POSTURE_WEIGHTS[mission.mission_posture]
 
-            
             # Create a dynamic grid of subplots (1 row, N columns for N robots)
             n_ugvs = len(ugv_logs)
             fig, axes = plt.subplots(1, n_ugvs, figsize=(5 * n_ugvs, 5), squeeze=False)
             fig.suptitle(f"Cost Maps & Paths — Mission: {mission_id}", fontsize=14, fontweight='bold')
-            
+
             axs = axes.flatten()
 
             for i, ugv_plan in enumerate(ugv_logs):
@@ -78,7 +74,7 @@ class MissionLogger:
 
                 # Safely find the corresponding UGV object in the OverArchingTwin
                 ugv = next((u for u in adt.active_ugvs if getattr(u, 'id', str(id(u))) == uid), None)
-                
+
                 if not ugv:
                     ax.set_title(f"UGV {uid} Not Found")
                     continue
@@ -108,8 +104,6 @@ class MissionLogger:
 
                 # Formatting the subplot
                 assigned_str = "Error"
-                
-
 
                 if n_ugvs < 2:
                     assigned_str = ""
@@ -117,10 +111,10 @@ class MissionLogger:
                 elif(self._per_mission_assignement_log[mission_id][0]["ugv_id"] == uid):
                     assigned_str = "(Winner)"
                 else:
-                    assigned_str = "(Loser)" 
+                    assigned_str = "(Loser)"
                 cost = ugv_plan["cost_assigned"]
                 if (cost > 1e8):
-                   assigned_str = "(Insufficient Battery)"     
+                   assigned_str = "(Insufficient Battery)"
 
 
                 ax.set_title(f"UGV: {uid}{assigned_str}\nCost: {ugv_plan['cost']:.2f} , Path Lenght: {len(path[0])} ")

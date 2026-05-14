@@ -7,13 +7,18 @@ Implements the mission layer of the HDT architecture.
 
 from __future__ import annotations
 
-import time
 import math
-from project_kobe_frateur.overarching_twin.mission import Mission, MissionType,POSTURE_WEIGHTS
+import time
 
 import numpy as np
 
-from project_kobe_frateur.mission_logger import MissionLogger
+from project_kobe_frateur.overarching_twin.mission import (
+    POSTURE_WEIGHTS,
+    Mission,
+    MissionType,
+)
+
+from ..loggers.mission_logger import MissionLogger
 
 
 class MissionPlanner:
@@ -51,7 +56,7 @@ class MissionPlanner:
         -------
         dict {ugv_id: path_array (2, N)}  for each newly assigned pair.
         Already-active missions are not re-assigned unless forced.
-        """        
+        """
 
         pending   = [m for m in missions if m.status == "pending"]
         available = [u for u in ugv_list
@@ -60,36 +65,35 @@ class MissionPlanner:
 
         if not pending or not available:
             return {}
-        
 
         # Cost matrix
         n_ugv = len(available)
         n_mis = len(pending)
         C = np.full((n_ugv, n_mis), fill_value=1e9)
 
-        # For each mission pending         
+        # For each mission pending
         for j, mission in enumerate(pending):
 
-            # First get the goal based on mission type 
+            # First get the goal based on mission type
             goal = self._resolve_goal(mission)
-            
+
             #Then we go over all available ugvs and check cost path
             for i, ugv in enumerate(available):
-                
+
                 if goal is None:
                     continue   # goal not yet available (TIME_GATED, target hidden)
-             
-                start_xy = getattr(ugv , "state")  
+
+                start_xy = ugv.state
                 t0 = time.perf_counter()
-                path, cost = self._plan(ugv, start_xy, goal, POSTURE_WEIGHTS[mission.mission_posture])                    
+                path, cost = self._plan(ugv, start_xy, goal, POSTURE_WEIGHTS[mission.mission_posture])
                 print(
                     f"[MissionPlanner] Path planned, "
                     f"Lenght : {len(path[0])}   "
                     f"{(time.perf_counter() - t0) * 1000:.0f} ms"
                 )
-                
+
                 if self._check_battery(ugv, path):
-                    C[i, j] = cost                    
+                    C[i, j] = cost
                     mission.last_cost = cost
                 else :
                     print(f"[MissionPlanner] Robot {self._ugv_id(ugv)} Cant complete mission because battery to low ")
@@ -97,7 +101,7 @@ class MissionPlanner:
 
 
                 self.mission_logger.update_per_mission_log(mission.mission_id, self._ugv_id(ugv) , path , cost , C[i, j])
-                
+
 
 
         # Hungarian assignment based on cost matrix
@@ -111,10 +115,10 @@ class MissionPlanner:
         result: dict[str, np.ndarray] = {}
 
         # Finalize assignment
-        for i, j in zip(row_idx, col_idx):
+        for i, j in zip(row_idx, col_idx, strict=False):
             if C[i, j] >= 1e8:
                 continue   # no feasible assignment
-            
+
             ugv     = available[i]
             mission = pending[j]
 
@@ -124,9 +128,9 @@ class MissionPlanner:
             ugv_id              = self._ugv_id(ugv)
             mission.assigned_ugv = ugv_id
             mission.status       = "active"
-                
+
             ugv.assigned_mission = mission
-                
+
             result[ugv_id]       = path
 
             self.mission_logger.update_assignment_log(
@@ -170,9 +174,9 @@ class MissionPlanner:
                         cost,
                         reason=reason)
             return path
-        else:
-            print(f"[MissionPlanner] Replan failed for {self._ugv_id(ugv)}: Battery to low")
-            return None
+
+        print(f"[MissionPlanner] Replan failed for {self._ugv_id(ugv)}: Battery to low")
+        return None
 
     def posture_for_battery(self, battery_pct: float) -> str:
         """
@@ -220,7 +224,7 @@ class MissionPlanner:
 
         budget  = battery - self._safety_reserve
 
-        
+
         energy = predict_path_energy(path, robot_mass=mass)
 
         print(f"[MissionPlanner] : Battery Check ; Battery : {battery} ; Safety : {self._safety_reserve} ; Energy Predicted {energy} ")
@@ -228,8 +232,7 @@ class MissionPlanner:
         if energy > budget:
             print(f"Path needs {energy:.1f}% battery, only {budget:.1f}% available.")
             return False
-        else :
-            return True
+        return True
 
     def _resolve_goal(
         self,
@@ -274,7 +277,7 @@ class MissionPlanner:
         Fallback greedy assignment when scipy is unavailable.
         Each UGV takes the cheapest available mission.
         """
-        n_ugv, n_mis = C.shape
+        n_ugv, _n_mis = C.shape
         assigned_mis: set[int] = set()
         rows, cols = [], []
         for i in range(n_ugv):
@@ -284,7 +287,7 @@ class MissionPlanner:
                 cols.append(best_j)
                 assigned_mis.add(best_j)
         return rows, cols
-    
+
 
 def predict_path_energy(
     path_xy:    np.ndarray,

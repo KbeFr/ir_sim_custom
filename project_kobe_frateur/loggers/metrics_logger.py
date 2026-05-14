@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 import numpy as np
 
 # Publication style
@@ -176,7 +176,7 @@ class MetricsLogger:
             "cost_breakdown",
             "trajectory",
         ]
-        for fig, name in zip(figs, names):
+        for fig, name in zip(figs, names, strict=False):
             path = os.path.join(save_dir, f"{self.ugv_id}_{name}.{file_fmt}")
             fig.savefig(path, bbox_inches="tight")
             print(f"[MetricsLogger] Saved: {path}")
@@ -216,7 +216,7 @@ class MetricsLogger:
 
         fig.tight_layout()
         return fig
-    
+
     def _fig_distance_acc(self) -> plt.Figure:
         """Figure 1.5: Distance and Acceleration profile."""
         r = self._records
@@ -242,11 +242,11 @@ class MetricsLogger:
         ax1.plot(t, dist_cumulative, color='steelblue', label="Cumulative Distance")
         ax1.set_ylabel("Distance [m]")
         ax1.grid(True, alpha=0.3)
-        
-        #dist text     
-        ax1.text(0.98, 0.05, f"Total distance: {dist_cumulative[-1]} m^3/s^9", 
+
+        #dist text
+        ax1.text(0.98, 0.05, f"Total distance: {dist_cumulative[-1]} m^3/s^9",
                 transform=ax2.transAxes, ha='right', fontsize=9,
-                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+                bbox={"facecolor": 'white', "alpha": 0.8, "edgecolor": 'none'})
 
         print(f"TotalDistance : {dist_cumulative[-1]}")
 
@@ -256,10 +256,10 @@ class MetricsLogger:
         ax2.set_xlabel("Time [s]")
         ax2.grid(True, alpha=0.3)
 
-        #msj text     
-        ax2.text(0.98, 0.05, f"MSJ: {msj:.2f} m^3/s^9", 
+        #msj text
+        ax2.text(0.98, 0.05, f"MSJ: {msj:.2f} m^3/s^9",
                 transform=ax2.transAxes, ha='right', fontsize=9,
-                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+                bbox={"facecolor": 'white', "alpha": 0.8, "edgecolor": 'none'})
 
         fig.tight_layout()
         return fig
@@ -293,7 +293,7 @@ class MetricsLogger:
         return fig
 
     def _fig_uncertainty(self) -> plt.Figure:
-        """Figure 3: position uncertainty proxy vs time (step × σ²)."""
+        """Figure 3: position uncertainty proxy vs time (step x σ²)."""
         r   = self._records
         t   = self._t()
         sig = np.array([
@@ -432,8 +432,10 @@ def plot_comparison(
         ax.plot(_t(lg), _arr(lg, 'battery'), color=color, label=lg.label)
     ax.axhline(15, color='k', linestyle='--', linewidth=0.8, label="Reserve")
     ax.set_title("Battery State of Charge")
-    ax.set_ylabel("%"); ax.set_xlabel("t [s]")
-    ax.legend(); ax.grid(True, alpha=0.3)
+    ax.set_ylabel("%")
+    ax.set_xlabel("t [s]")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
 
     # ── Cumulative distance ───────────────────────────────────────────────────
     ax = fig.add_subplot(gs[0, 1])
@@ -441,8 +443,10 @@ def plot_comparison(
         dist = np.cumsum(_arr(lg, 'step_dist'))
         ax.plot(_t(lg), dist, color=color, label=lg.label)
     ax.set_title("Cumulative Path Length")
-    ax.set_ylabel("m"); ax.set_xlabel("t [s]")
-    ax.legend(); ax.grid(True, alpha=0.3)
+    ax.set_ylabel("m")
+    ax.set_xlabel("t [s]")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
 
     # ── Uncertainty integral ──────────────────────────────────────────────────
     ax = fig.add_subplot(gs[1, 0])
@@ -452,8 +456,10 @@ def plot_comparison(
         )
         ax.plot(_t(lg), np.cumsum(sig), color=color, label=lg.label)
     ax.set_title("Uncertainty Integral  (↓ better)")
-    ax.set_ylabel("m²·m"); ax.set_xlabel("t [s]")
-    ax.legend(); ax.grid(True, alpha=0.3)
+    ax.set_ylabel("m²·m")
+    ax.set_xlabel("t [s]")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
 
     # ── Summary bar chart ─────────────────────────────────────────────────────
     ax = fig.add_subplot(gs[1, 1])
@@ -468,9 +474,11 @@ def plot_comparison(
            width, label=logger_a.label, color='steelblue', edgecolor='k', lw=0.6)
     ax.bar(x + width/2, [sb.get(k, 0) for k in keys],
            width, label=logger_b.label, color='tomato', edgecolor='k', lw=0.6)
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=20, ha='right')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=20, ha='right')
     ax.set_title("Key Metrics Comparison")
-    ax.legend(); ax.grid(True, axis='y', alpha=0.3)
+    ax.legend()
+    ax.grid(True, axis='y', alpha=0.3)
 
     path = os.path.join(save_dir, f"comparison_{logger_a.ugv_id}.{file_fmt}")
     fig.savefig(path, bbox_inches="tight")

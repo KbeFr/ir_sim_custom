@@ -25,8 +25,10 @@ import numpy as np
 from irsim.lib.handler.geometry_handler import GeometryFactory
 from irsim.util.util import to_numpy
 from irsim.world.map import EnvGridMap
-from project_kobe_frateur.overarching_twin.grid_map import GlobalGridMap
 from irsim.world.robots.ugv_twin import UGVTwin
+
+from ..overarching_twin.grid_map import GlobalGridMap
+
 
 class AStarPlanner:
     def __init__(self, env_map: EnvGridMap  ) -> None:
@@ -98,7 +100,7 @@ class AStarPlanner:
         self,
         start_pose: np.ndarray,
         goal_pose: np.ndarray,
-        weights  , 
+        weights ,
         global_grid_map : GlobalGridMap ,
         ugv : UGVTwin,
         show_animation: bool = True,
@@ -181,7 +183,6 @@ class AStarPlanner:
 
             # Add it to the closed set
             closed_set[c_id] = current
-            
 
             # expand_grid search grid based on motion model
             for i, _ in enumerate(self.motion):
@@ -190,21 +191,21 @@ class AStarPlanner:
                 # Calculate the target cell coordinates
                 nx = current.x + self.motion[i][0]
                 ny = current.y + self.motion[i][1]
-                
+
                 # Convert the grid step (1 or 1.414) into physical meters
-                step_dist = self.motion[i][2] * self.resolution 
+                step_dist = self.motion[i][2] * self.resolution
 
                 # Verify the node is within bounds and not a hard obstacle before doing math
                 dummy_node = self.Node(nx, ny, 0.0, -1)
                 if not self.verify_node(dummy_node):
                     continue
-                
-                # calc cost 
+
+                # calc cost
                 move_cost = global_grid_map.cell_cost(
-                    gx=nx, 
-                    gy=ny, 
-                    step_dist=step_dist, 
-                    weights=weights, 
+                    gx=nx,
+                    gy=ny,
+                    step_dist=step_dist,
+                    weights=weights,
                     robot_mass=robot_mass,
                     v_avg=robot_avg_speed,
                     Ka=robot_anc_drain

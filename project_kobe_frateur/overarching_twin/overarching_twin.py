@@ -1,24 +1,21 @@
 from __future__ import annotations
-from enum import Enum
+
 import math
+from enum import Enum
+
 import numpy as np
 
+from irsim.env.env_base import EnvBase
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
-from irsim.env.env_base import EnvBase
-from .uav_fleet_dt import UAVFleetDT
+
+from ..loggers.metrics_logger import MetricsLogger
+from ..loggers.mission_logger import MissionLogger
+from ..path_planners.a_star import AStarPlanner
 from .grid_map import GlobalGridMap
-from .mission_planner import (
-    MissionPlanner
-)
-
-
-from .mission import (
-    Mission, POSTURE_WEIGHTS, DEFAULT_POSTURE)
-
-from loggers.mission_logger import MissionLogger
-from loggers.metrics_logger import MetricsLogger
-from path_planners.a_star import AStarPlanner
+from .mission import DEFAULT_POSTURE, POSTURE_WEIGHTS, Mission
+from .mission_planner import MissionPlanner
+from .uav_fleet_dt import UAVFleetDT
 
 
 class PerceptionMode(Enum):
@@ -41,7 +38,7 @@ class OverArchingTwin:
     env             ir-sim environment.
     uav             UAVTwin or list thereof.
     ugv             UGVTwin or list thereof.
-    resolution      Grid cell size [m].  0.3–0.5 m for a 40 m world.
+    resolution      Grid cell size [m].  0.3-0.5 m for a 40 m world.
     open_map_viewer Open a separate map-viewer window (set False for headless).
     """
 
@@ -55,7 +52,7 @@ class OverArchingTwin:
     ) -> None:
         self.env = env
 
-        # --- World dimensions 
+        # --- World dimensions
         self._W = float(env._world.width)
         self._H = float(env._world.height)
         self._ox = float(env._world.offset[0])
@@ -63,7 +60,7 @@ class OverArchingTwin:
         self._world_specs = (self._W, self._H, self._ox, self._oy)
         self.resolution = resolution
 
-        # --- Agents 
+        # --- Agents
         self.uav_fleet = UAVFleetDT(uav)
         self._all_ugvs: list[UGVTwin] = ugv if isinstance(ugv, list) else [ugv]
 
@@ -71,7 +68,7 @@ class OverArchingTwin:
         self.perception_mode: PerceptionMode = PerceptionMode.ALL
         self.perceived_obstacles = env.obstacle_list
 
-        # ---  global grid map + cost map 
+        # ---  global grid map + cost map
         self.grid_map = GlobalGridMap(
             world_specs=self._world_specs,
             obstacle_list=self.perceived_obstacles,
@@ -81,7 +78,7 @@ class OverArchingTwin:
         # --- A* planner
         self._astar = AStarPlanner(env_map=self.grid_map.env_map)
 
-        # --- mission planner 
+        # --- mission planner
         self.missions: list[Mission] = []
         self._posture: str = DEFAULT_POSTURE
         self._sim_step: int = 0
@@ -201,7 +198,7 @@ class OverArchingTwin:
             ugv_list=self.ugvs,
         )
 
-        # Push waypoints to ugvs 
+        # Push waypoints to ugvs
         for ugv_id, path in new_paths.items():
             self._active_paths[ugv_id] = path
             ugv = self._get_ugv(ugv_id)
@@ -213,7 +210,7 @@ class OverArchingTwin:
             # self._check_dynamic_replan()
             pass
 
-        # --- Record metrics 
+        # --- Record metrics
         for ugv in self.ugvs:
             self._record_step(ugv)
 
@@ -230,7 +227,7 @@ class OverArchingTwin:
         """Convert (2,N) path array to waypoints and call ugv.set_goal()."""
         xs, ys = path[0][::-1], path[1][::-1]  # reverse: goal→start → start→goal
         waypoints = [[float(x), float(y), 0.0]
-                     for x, y in zip(xs[1:], ys[1:])]
+                     for x, y in zip(xs[1:], ys[1:], strict=False)]
         ugv.set_goal(waypoints)
 
     def _check_dynamic_replan(self) -> None:
@@ -240,7 +237,7 @@ class OverArchingTwin:
             path = self._active_paths.get(uid)
             if path is None:
                 continue
-            pts = list(zip(path[0], path[1]))
+            pts = list(zip(path[0], path[1], strict=False))
             for obs in self.env.obstacle_list:
                 if not self._is_dynamic(obs):
                     continue
@@ -283,7 +280,7 @@ class OverArchingTwin:
         # Get grid index from real ugv pos
         gx, gy = self.grid_map.world_to_cell(ugv.state[0, 0], ugv.state[1, 0])
 
-        # Get UGV coverage 
+        # Get UGV coverage
         in_cov = (gx, gy) in self.grid_map.coverage
 
         # Record this data in the ugv specific logger
@@ -298,10 +295,8 @@ class OverArchingTwin:
         if getattr(obs, 'behavior', None) is not None:
             return True
         vel_max = getattr(obs, 'vel_max', None)
-        if vel_max is not None:
-            if np.any(np.abs(np.array(vel_max).flatten()) > 1e-6):
-                return True
-        return False
+
+        return bool(vel_max is not None and np.any(np.abs(np.array(vel_max).flatten()) > 1e-06))
 
     def _ugv_id(self, ugv) -> str:
         return getattr(ugv, 'id', str(id(ugv)))

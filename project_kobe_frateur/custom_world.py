@@ -1,20 +1,21 @@
 import matplotlib
+
 matplotlib.use("QtAgg")
-import irsim
 
+from local_controllers.c3bf_qp import CollisionConeCBFController
+from local_controllers.cbf_qp import CBFQPController
+from local_controllers.local_planners import PurePursuitController
+from loggers.mission_logger import MissionLogger
 from overarching_twin.overarching_twin import OverArchingTwin
-from project_kobe_frateur.overarching_twin.mission import Mission, MissionType
 
+import irsim
 from irsim.world.robots.uav_twin import UAVTwin
 from irsim.world.robots.ugv_twin import UGVTwin
-from project_kobe_frateur.local_planners.c3bf_qp import CollisionConeCBFController
-from project_kobe_frateur.local_planners.cbf_qp import CBFQPController
-from project_kobe_frateur.local_planners.local_planners import PurePursuitController
-from project_kobe_frateur.mission_logger import MissionLogger
 
-from project_kobe_frateur.simulation_gui import launch
+from .overarching_twin.mission import Mission, MissionType
+from .simulation_gui import launch
 
-# ---  Config 
+# ---  Config
 CONTROLLER       = "cbf"          # "c3bf" | "cbf" | "pure_pursuit"
 USE_GLOBAL_PLAN  = False            # False = UGV navigates to YAML goal directly
 PERCEPTION_MODE  = "ugv"           # "all" | "uav" | "ugv" | "merged"
@@ -23,13 +24,13 @@ MAX_STEPS        = 800
 # --- Environment
 env = irsim.make("Experiment1/world_experiment1.yaml")
 
-# Collect UAV and UGV twins from the robot list. 
+# Collect UAV and UGV twins from the robot list.
 uav_twins = [r for r in env.robot_list if isinstance(r, UAVTwin)]
 ugv_twins = [r for r in env.robot_list if isinstance(r, UGVTwin)]
 
 
 
-# --- Controllers (one per UGV) 
+# --- Controllers (one per UGV)
 controllers = {}
 for ugv in ugv_twins:
     if CONTROLLER == "c3bf":
@@ -49,11 +50,11 @@ for ugv in ugv_twins:
         controllers[ugv.id] = PurePursuitController()
 
 
-# --- Global logger 
+# --- Global logger
 mission_logger = MissionLogger()
 
 
-# ---  Overarching Twin 
+# ---  Overarching Twin
 adt = OverArchingTwin(
     env             = env,
     uav             = uav_twins,
@@ -64,7 +65,7 @@ adt = OverArchingTwin(
 
 
 
-# --- Mission definition 
+# --- Mission definition
 
 # Each mission is independent of the YAML goal.
 # The planner assigns them optimally across all available UGVs.
@@ -94,7 +95,7 @@ launch(
 )
 
 
-# End of simulation 
+# End of simulation
 
 """
 mission_logger.draw_mission_costs(adt)

@@ -7,12 +7,7 @@ Mission - dataclass describing one task (goal, constraints, status).
 
 
 from dataclasses import dataclass, field
-
 from enum import Enum, auto
-from typing import Any
-
-
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Posture weight presets  (Table 1 in thesis)
@@ -51,7 +46,7 @@ class MissionType(Enum):
     TRACK_TARGET     = auto()   # intercept / follow a moving object by ir-sim id
     COVERAGE_PATROL  = auto()   # visit an ordered list of (x, y) waypoints
     TIME_GATED_GOTO  = auto()   # waypoint becomes available at sim time T
-    
+
     @classmethod
     def get_names(cls):
         return [member.name for member in cls]
