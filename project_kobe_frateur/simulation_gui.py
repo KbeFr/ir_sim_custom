@@ -19,6 +19,7 @@ import sys
 
 import matplotlib
 import numpy as np
+import yaml
 from matplotlib.widgets import PolygonSelector
 
 matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
@@ -29,7 +30,12 @@ from matplotlib.collections import PatchCollection
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Polygon
-from overarching_twin.mission import POSTURE_WEIGHTS, MissionPosture , Mission ,MissionType
+from overarching_twin.mission import (
+    POSTURE_WEIGHTS,
+    Mission,
+    MissionPosture,
+    MissionType,
+)
 from overarching_twin.overarching_twin import PerceptionMode
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QFont
@@ -102,7 +108,7 @@ class SimulationGUI(QMainWindow):
 
         # Saving runs
         self._saved_runs = {}  # key: unique label → {rid, xs, ys, artist}
-        self._ugv_traces = {ugv.id: ([], []) for ugv in self.adt.all_ugvs}
+        self._ugv_traces = {ugv.id: ([], []) for ugv in self.adt.ugv_fleet.all_ugvs}
         self._saved_artists = {}
         self._run_colors = ['lime','red', 'cyan', 'magenta', 'yellow', 'white']
 
@@ -518,6 +524,14 @@ class SimulationGUI(QMainWindow):
         btn_render.clicked.connect(self._render_map_layer)
         layout.addWidget(btn_render)
 
+        # ── Export Map Button ───────────────────────────────────────────
+        grp_export = QGroupBox("Map Export")
+        export_vbox = QVBoxLayout(grp_export)
+        btn_export = QPushButton("💾 Export Map to YAML")
+        btn_export.clicked.connect(self._export_map_to_yaml)
+        export_vbox.addWidget(btn_export)
+        layout.addWidget(grp_export)
+
         layout.addStretch()
         return w
 
@@ -677,6 +691,8 @@ class SimulationGUI(QMainWindow):
                 state=[cx, cy, 0.0],
                 name=f"poly_obs_{int(cx)}_{int(cy)}"
             )
+            obs.type = "obstacle"
+
             self._add_by_obj(obs)
 
             self._log(f"📐 Custom polygon spawned at ({cx:.1f}, {cy:.1f})")
@@ -694,7 +710,7 @@ class SimulationGUI(QMainWindow):
 
         if getattr(obj, 'role', None) == "robot":
             if isinstance(obj, UGVTwin):
-                self.adt.add_ugv(obj)
+                self.adt.ugv_fleet.add_ugv(obj)
                 if self.controllers:
                     self.controllers[obj.id] = CollisionConeCBFController(
                         robot_type=obj.kinematics, safety_margin=0.05, goal_gain=0.8
@@ -866,6 +882,65 @@ class SimulationGUI(QMainWindow):
             self.map_canvas.draw()
             self.map_canvas.flush_events()
 
+    def _export_map_to_yaml(self):
+        """Export current static obstacles to an ir-sim compatible YAML file."""
+        # Ask the user where to save the file
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Map to YAML", "./custom_map.yaml", "YAML Files (*.yaml *.yml)"
+        )
+
+        if not file_path:
+            return  # User canceled
+
+        obstacles_data = []
+
+        # Loop over all obstacles in the environment
+        for obs in self.env.obstacle_list:
+            
+            # Skip the map boundary object or dynamically moving obstacles (if desired)
+            if obs.shape == 'map' or not getattr(obs, 'static', True):
+                continue
+
+            # Extract the state [x, y, theta] and round to 3 decimals to keep it clean
+            state_list = [round(float(s), 3) for s in obs.state.flatten()]
+
+            # Build the shape dictionary
+            shape_dict = {"name": obs.shape}
+
+            if obs.shape == "circle":
+                shape_dict["radius"] = round(float(obs.radius), 3)
+            elif obs.shape == "rectangle":
+                shape_dict["length"] = round(float(obs.length), 3)
+                shape_dict["width"] = round(float(obs.width), 3)
+            elif obs.shape == "polygon":
+                # For polygons drawn by the user, export the local vertices
+                indices = []
+                verts = np.round(obs.original_vertices, 3).tolist()
+                for x,y in zip(verts[0], verts[1], strict=False):
+                    indices.append([x,y])
+                shape_dict["vertices"] = indices
+
+            # Create the entry for this specific obstacle
+            obs_entry = {
+                "shape": shape_dict,
+                "state": state_list
+            }
+
+            obstacles_data.append(obs_entry)
+
+        # Wrap it in the root "obstacles" key that ir-sim expects
+        world_data = {
+            "obstacle": obstacles_data
+        }
+
+        # Save to the selected file using PyYAML
+        try:
+            with open(file_path, 'w') as f:
+                # sort_keys=False ensures 'shape' comes before 'state' 
+                yaml.dump(world_data, f, sort_keys=False, default_flow_style=None)
+            self._log(f"💾 Map successfully exported to {file_path} with {len(obstacles_data)} obstacles.")
+        except Exception as e:
+            self._log(f"❌ Failed to export map: {e}")
 
     # ══════════════════════════════════════════════════════════════════════
     # Robot selection
@@ -1051,7 +1126,7 @@ class SimulationGUI(QMainWindow):
         self._perception_artists.clear()
 
         # Reset UGV position tracking
-        self._ugv_traces = {ugv.id: ([], []) for ugv in self.adt.all_ugvs}
+        self._ugv_traces = {ugv.id: ([], []) for ugv in self.adt.ugv_fleet.all_ugvs}
         
         for robot in self.env.robot_list:
             robot.set_text(None) # Restore original name
@@ -1079,7 +1154,7 @@ class SimulationGUI(QMainWindow):
 
         # 2. Local controllers → actions
         actions, ids = [], []
-        for ugv in self.adt.ugvs:
+        for ugv in self.adt.ugv_fleet.ugvs:
 
             if self._use_global_plan and ugv.assigned_mission is None:
                 continue
@@ -1103,7 +1178,7 @@ class SimulationGUI(QMainWindow):
         # 3. Physics
         self.env.step(action=actions, action_id=ids)
 
-        for ugv in self.adt.ugvs:
+        for ugv in self.adt.ugv_fleet.ugvs:
             xs, ys = self._ugv_traces[ugv.id]
             xs.append(float(ugv.state.flat[0]))
             ys.append(float(ugv.state.flat[1]))
@@ -1332,7 +1407,7 @@ class SimulationGUI(QMainWindow):
                 print(weights)
 
                 # Safely find the corresponding UGV object in the OverArchingTwin
-                ugv = next((u for u in self.adt.ugvs if getattr(u, 'id', str(id(u))) == ugv_id), None)
+                ugv = next((u for u in self.adt.ugv_fleet.ugvs if getattr(u, 'id', str(id(u))) == ugv_id), None)
 
                 cost_img = gm.get_cost_image(
                     weights=weights,
@@ -1428,7 +1503,7 @@ class SimulationGUI(QMainWindow):
                 posture = mission.mission_posture
 
                 weights = POSTURE_WEIGHTS[posture]
-                ugv = next((u for u in self.adt.ugvs if getattr(u, 'id', None) == ugv_id), None)
+                ugv = next((u for u in self.adt.ugv_fleet.ugvs if getattr(u, 'id', None) == ugv_id), None)
 
                 if ugv:
                     img_data = gm.get_cost_image(weights=weights, robot_mass=ugv.mass,
@@ -1502,12 +1577,12 @@ class SimulationGUI(QMainWindow):
 
         # O(1) Lookups: Pre-compute sets outside the loop to avoid redundant calculations
         try:
-            uav_obs_ids = {o.id for o in self.adt.get_uavs_view()}
+            uav_obs_ids = {o.id for o in self.adt.uav_fleet.get_uavs_view()}
         except Exception:
             uav_obs_ids = set()
 
         try:
-            ugv_obs_ids = {o.id for o in self.adt.get_ugvs_view()}
+            ugv_obs_ids = {o.id for o in self.adt.ugv_fleet.get_ugvs_view()}
         except Exception:
             ugv_obs_ids = set()
 
@@ -1649,7 +1724,7 @@ class SimulationGUI(QMainWindow):
             from irsim.world.robots.ugv_twin import UGVTwin
 
             if isinstance(robot, UGVTwin):
-                self.adt.add_ugv(robot)
+                self.adt.ugv_fleet.add_ugv(robot)
                 # Add a default controller (same type as first UGV if available)
                 if self.controllers:
                     self.controllers[robot.id] = CollisionConeCBFController(
@@ -1684,7 +1759,7 @@ class SimulationGUI(QMainWindow):
 
         # env.delete_object handles plot_clear + _objects removal + build_tree
         self.env.delete_object(rid)
-        self.adt.remove_ugv(robot)
+        self.adt.ugv_fleet.remove_ugv(robot)
         self.adt.uav_fleet.remove_uav(robot)
         self.controllers.pop(rid, None)
         self._visibility_robots.pop(rid, None)

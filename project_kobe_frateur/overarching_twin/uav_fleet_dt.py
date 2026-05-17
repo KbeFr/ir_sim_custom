@@ -1,5 +1,4 @@
 from irsim.world.robots.uav_twin import UAVTwin
-from irsim.world.robots.ugv_twin import UGVTwin
 
 
 class UAVFleetDT:
@@ -10,10 +9,16 @@ class UAVFleetDT:
     def __init__(self, uavs: list[UAVTwin] | UAVTwin) -> None:
         self._all_uavs = uavs if isinstance(uavs, list) else [uavs]
 
+        self.first_time_view = True
+
         # Objects that hidden for fault injection
         self.hidden_objects = set()
 
     def get_uavs_view(self) -> list[dict]:
+        if self.first_time_view:
+            self.sensor_step()
+            self.first_time_view = False
+
         obstacles = []
         for uav in self.uavs:
             obstacles.extend(uav.get_uav_view())
@@ -58,7 +63,7 @@ class UAVFleetDT:
 
 
     @property
-    def uavs(self) -> list[UGVTwin]:
+    def uavs(self) -> list[UAVTwin]:
         """
         Dynamically returns only the UAVs that are unobstructed/active.
         This prevents having to check visibility in every single loop.

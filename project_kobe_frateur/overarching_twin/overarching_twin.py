@@ -14,6 +14,7 @@ from overarching_twin.mission import (
     MissionPosture,
 )
 from overarching_twin.mission_planner import MissionPlanner
+from overarching_twin.ugv_fleet_dt import UGVFleetDT
 from overarching_twin.uav_fleet_dt import UAVFleetDT
 from path_planners.a_star import AStarPlanner
 from path_planners.a_star_custom import AStarPlannerCustom
@@ -52,7 +53,7 @@ class OverArchingTwin:
             env: EnvBase,
             uav: list[UAVTwin] | UAVTwin,
             ugv: list[UGVTwin] | UGVTwin,
-            perception_mode : str,
+            perception_mode: str,
             mission_logger: MissionLogger,
             resolution: float = 0.4,
     ) -> None:
@@ -68,11 +69,11 @@ class OverArchingTwin:
 
         # --- Agents
         self.uav_fleet = UAVFleetDT(uav)
-        self._all_ugvs: list[UGVTwin] = ugv if isinstance(ugv, list) else [ugv]
+        self.ugv_fleet = UGVFleetDT(ugv)
 
         # --- Define innit obstacles view
         self.perceived_obstacles = []
-        self.perception_mode = None #Let it be set through method.
+        self.perception_mode = None  # Let it be set through method.
         self.set_perception_mode(perception_mode)
 
         # ---  global grid map + cost map
@@ -86,7 +87,6 @@ class OverArchingTwin:
         self._astar = AStarPlanner(env_map=self.grid_map.env_map)
         self._astar_custom = AStarPlannerCustom(env_map=self.grid_map.env_map)
 
-
         # --- mission planner
         self.missions: list[Mission] = []
         self._posture: MissionPosture = DEFAULT_POSTURE
@@ -96,7 +96,7 @@ class OverArchingTwin:
 
         self.mission_planner = MissionPlanner(
             astar_planner=self._astar,
-            astar_planner_custom = self._astar_custom,
+            astar_planner_custom=self._astar_custom,
             grid_map=self.grid_map,
             sim_time_fn=lambda: self._sim_step * self._dt,
             uav_world_map_fn=lambda: {
@@ -115,14 +115,13 @@ class OverArchingTwin:
     def _setup_robot_loggers(self):
         # --- per-UGV metrics loggers
         self._loggers: dict[str, MetricsLogger] = {
-            self._ugv_id(u): MetricsLogger(
-                ugv_id=self._ugv_id(u),
+            u.id : MetricsLogger(
+                ugv_id=u.id,
                 dt=self._dt,
-                label=self._ugv_id(u),
+                label=u.id,
             )
-            for u in self.ugvs
+            for u in self.ugv_fleet.ugvs
         }
-
 
     def set_perception_mode(self, mode: str):
         mode = PerceptionMode[mode]
@@ -135,10 +134,10 @@ class OverArchingTwin:
             self.perceived_obstacles = self.env.obstacle_list
             self.perception_mode = mode
         elif mode == PerceptionMode.UAV:
-            self.perceived_obstacles = self.get_uavs_view()
+            self.perceived_obstacles = self.uav_fleet.get_uavs_view()
             self.perception_mode = mode
         elif mode == PerceptionMode.UGV:
-            self.perceived_obstacles = self.get_ugvs_view()
+            self.perceived_obstacles = self.ugv_fleet.get_ugvs_view()
             self.perception_mode = mode
         elif mode == PerceptionMode.MERGED:
             self.perceived_obstacles = self.get_merged_view()
@@ -149,30 +148,10 @@ class OverArchingTwin:
             self.grid_map.update_perception(self.perceived_obstacles)
 
     def get_merged_view(self):
-        object = []
-        object.extend(self.get_uavs_view())
-        object.extend(self.get_ugvs_view())
-        return object
-
-    def get_ugvs_view(self):
-        # Step sensors if sim didnt run before, otherwise no detections present
-        if self._sim_step == 0:
-            self.ugvs_sensor_step()
-
         objects = []
-        for ugv in self.ugvs:
-            objects.extend(ugv.get_ugv_view())
+        objects.extend(self.uav_fleet.get_uavs_view())
+        objects.extend(self.ugv_fleet.get_ugvs_view())
         return objects
-
-    def get_uavs_view(self):
-        # Step sensors if sim didnt run before, otherwise no detections present
-        if self._sim_step == 0:
-            self.uav_fleet.sensor_step()
-        return self.uav_fleet.get_uavs_view()
-
-    def ugvs_sensor_step(self):
-        for ugv in self.ugvs:
-            ugv.sensor_step()
 
     def add_perceived_obstacle(self, obs):
         if obs not in self.perceived_obstacles:
@@ -188,7 +167,7 @@ class OverArchingTwin:
         self._sim_step = 0
         self._setup_robot_loggers()
         self.missions = []
-        #TODO : Reset perception mode objects perceived
+        # TODO : Reset perception mode objects perceived
 
     """
     MAIN STEP
@@ -205,13 +184,13 @@ class OverArchingTwin:
         # Assign best ugv for mission and weights
         new_paths = self.mission_planner.assign_and_plan(
             missions=self.missions,
-            ugv_list=self.ugvs,
+            ugv_list=self.ugv_fleet.ugvs,
         )
 
         # Push waypoints to ugvs
         for ugv_id, path in new_paths.items():
             self._active_paths[ugv_id] = path
-            ugv = self._get_ugv(ugv_id)
+            ugv = self.ugv_fleet.get_ugv(ugv_id)
             if ugv is not None:
                 self._send_path_to_ugv(ugv, path)
 
@@ -221,7 +200,7 @@ class OverArchingTwin:
             pass
 
         # --- Record metrics
-        for ugv in self.ugvs:
+        for ugv in self.ugv_fleet.ugvs:
             self._record_step(ugv)
 
     def add_mission(self, mission: Mission) -> None:
@@ -240,12 +219,10 @@ class OverArchingTwin:
                      for x, y in zip(xs[1:], ys[1:], strict=False)]
         ugv.set_goal(waypoints)
 
-
-
     def _check_dynamic_replan(self) -> None:
         """Trigger replanning if any dynamic obstacle enters an active path."""
-        for ugv in self.ugvs:
-            uid = self._ugv_id(ugv)
+        for ugv in self.ugv_fleet.ugvs:
+            uid = ugv.id
             path = self._active_paths.get(uid)
             if path is None:
                 continue
@@ -287,7 +264,7 @@ class OverArchingTwin:
     def _record_step(self, ugv):
         """Record a step of the ugv in logger"""
 
-        uid = self._ugv_id(ugv)
+        uid = ugv.id
 
         # Get grid index from real ugv pos
         gx, gy = self.grid_map.world_to_cell(ugv.state[0, 0], ugv.state[1, 0])
@@ -309,38 +286,3 @@ class OverArchingTwin:
         vel_max = getattr(obs, 'vel_max', None)
 
         return bool(vel_max is not None and np.any(np.abs(np.array(vel_max).flatten()) > 1e-06))
-
-    def _ugv_id(self, ugv) -> str:
-        return getattr(ugv, 'id', str(id(ugv)))
-
-    def _get_ugv(self, ugv_id: str) -> UGVTwin | None:
-        for u in self.ugvs:
-            if self._ugv_id(u) == ugv_id:
-                return u
-        return None
-
-    def add_ugv(self, robot):
-        if robot not in self._all_ugvs:
-            self._all_ugvs.append(robot)
-
-    def remove_ugv(self,robot):
-        if robot in self._all_ugvs:
-            self._all_ugvs.remove(robot)
-        else:
-            print(f"[OverArchingTwin] Robot: {robot.id} not in list, wanted to remove")
-
-    @property
-    def ugvs(self) -> list[UGVTwin]:
-        """
-        Dynamically returns only the UGVs that are unobstructed/active.
-        This prevents having to check visibility in every single loop.
-        """
-        return [u for u in self._all_ugvs if not getattr(u, 'unobstructed', False)]
-    @property
-    def all_ugvs(self) -> list[UGVTwin]:
-        """
-        Dynamically returns only the UGVs that are unobstructed/active.
-        This prevents having to check visibility in every single loop.
-        """
-        return self._all_ugvs
-
