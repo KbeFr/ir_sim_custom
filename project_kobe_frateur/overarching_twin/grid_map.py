@@ -92,6 +92,7 @@ class GlobalGridMap:
         Rebuild UAV coverage set from Shapely camera footprints.
         Uses a vectorised Matplotlib Path check, fast for large grids.
         """
+
         new_coverage: set[tuple[int, int]] = set()
 
         for geom in coverage_geometries:
@@ -122,8 +123,9 @@ class GlobalGridMap:
             points = np.c_[cx.ravel(), cy.ravel()]
             mask   = Path(vertices).contains_points(points)
 
-            new_coverage.update(zip(ii.ravel()[mask], jj.ravel()[mask], strict=False))
-
+            new_coverage.update(
+                zip(ii.ravel()[mask].tolist(), jj.ravel()[mask].tolist(), strict=False)
+            )
         self._coverage = new_coverage
 
     # --- Cost function
@@ -220,6 +222,9 @@ class GlobalGridMap:
             lo, hi = finite.min(), finite.max()
             if hi > lo:
                 img = (img - lo) / (hi - lo)
+
+        img[np.isnan(img)] = 1.0
+
         return img
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import time
+from turtle import pen
 
 import numpy as np
 from loggers.mission_logger import MissionLogger
@@ -27,6 +28,7 @@ class MissionPlanner:
     def __init__(
         self,
         astar_planner,
+        astar_planner_custom,
         grid_map,
         sim_time_fn,
         uav_world_map_fn,
@@ -34,6 +36,8 @@ class MissionPlanner:
         safety_reserve: float = 15.0,
     ) -> None:
         self._planner       = astar_planner
+        print(astar_planner_custom)
+        self._planner_custom = astar_planner_custom
         self._grid_map      = grid_map
         self._sim_time      = sim_time_fn       # callable: () → float
         self._uav_world_map = uav_world_map_fn  # callable: () → dict
@@ -84,11 +88,20 @@ class MissionPlanner:
                 start_xy = ugv.state
                 t0 = time.perf_counter()
                 path, cost = self._plan(ugv, start_xy, goal, POSTURE_WEIGHTS[mission.mission_posture])
+
+                path_lenght = len(path[0])
+                if path_lenght <2:
+                    print(f"[MissionPlanner] Robot {self._ugv_id(ugv)} Cant complete mission because path unfeasable ")
+                    C[i, j] = 1e9   # infeasible
+                    #dont log because path infeasable not real assign ig
+                    continue
+
                 print(
                     f"[MissionPlanner] Path planned, "
                     f"Lenght : {len(path[0])}   "
                     f"{(time.perf_counter() - t0) * 1000:.0f} ms"
                 )
+
 
                 if self._check_battery(ugv, path):
                     C[i, j] = cost
@@ -128,7 +141,7 @@ class MissionPlanner:
             mission.status       = "active"
 
             ugv.assigned_mission = mission
-
+            
             result[ugv_id]       = path
 
             self.mission_logger.update_assignment_log(
@@ -143,6 +156,11 @@ class MissionPlanner:
                 f"{ugv_id} → {mission.mission_id} "
                 f"cost={cost:.2f}  goal={goal}"
             )
+
+        # If we still have missions that are pending, these are unfeasable atm and can be removed ig
+        for mission in pending:
+            if mission.status == "pending":
+                mission.status = "failed"
 
         return result
 
@@ -204,15 +222,28 @@ class MissionPlanner:
         goal  = np.array([[goal_xy[0]],  [goal_xy[1]]])
 
 
-        path = self._planner.planning(
+        #original astar used
+        if weights == POSTURE_WEIGHTS["ASTAR"]:
+
+            print("Using original Astar Planner")
+
+            path = self._planner.planning(
             start_pose     = start,
             goal_pose      = goal,
-            #weights        = weights,
-            #global_grid_map   = self._grid_map,
-            #ugv            = ugv,
+            show_animation = False,
+            )
+            return path , 0
+
+        print(self._planner_custom)
+        path, cost = self._planner_custom.planning(
+            start_pose     = start,
+            goal_pose      = goal,
+            weights        = weights,
+            global_grid_map   = self._grid_map,
+            ugv            = ugv,
             show_animation = False,
         )
-        return path, 1
+        return path, cost
 
     def _check_battery(self, ugv, path: np.ndarray) -> None:
         """Raise BatteryConstraintError if path energy exceeds budget."""

@@ -21,7 +21,7 @@ PERCEPTION_MODE  = "ugv"           # "all" | "uav" | "ugv" | "merged"
 MAX_STEPS        = 800
 
 # --- Environment
-env = irsim.make("project_kobe_frateur/experiments/Experiment1/world_experiment1.yaml")
+env = irsim.make("project_kobe_frateur/experiments/Experiment2/world_experiment2.yaml")
 
 # Collect UAV and UGV twins from the robot list.
 uav_twins = [r for r in env.robot_list if isinstance(r, UAVTwin)]

@@ -15,7 +15,7 @@ def parse_args():
     p.add_argument("--width",      type=float, default=40,    help="World width")
     p.add_argument("--height",     type=float, default=40,    help="World height")
     p.add_argument("--scarcity",   type=float, default=0.5,   help="Scarcity 0=dense, 1=sparse")
-    p.add_argument("--robot-r",    type=float, default=0.2,   help="Robot radius (clearance)")
+    p.add_argument("--robot-r",    type=float, default=0.3,   help="Robot radius (clearance)")
     p.add_argument("--seed",       type=int,   default=None,  help="Random seed")
     p.add_argument("--corners",    action="store_true",        help="Add corner circle markers")
     p.add_argument("--output",     type=str,   default="obstacles.yaml")

@@ -1,0 +1,1 @@
+python gen_obstacles.py --width 40 --height 40 --scarcity 0.1 --seed 5 --robot-r 0.2

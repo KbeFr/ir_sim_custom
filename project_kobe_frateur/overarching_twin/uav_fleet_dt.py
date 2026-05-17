@@ -17,10 +17,8 @@ class UAVFleetDT:
         obstacles = []
         for uav in self.uavs:
             obstacles.extend(uav.get_uav_view())
-        # Convert to set for high-speed lookups
-        hidden_set = self.hidden_objects
 
-        return [obj for obj in obstacles if obj not in hidden_set]
+        return [obj for obj in obstacles if obj not in self.hidden_objects]
 
     """For real position return, not nessesary yet
     def get_uav_view(self) -> list[dict]:
@@ -37,7 +35,7 @@ class UAVFleetDT:
         geoms = []
         for uav in self.uavs:
             cam = next(
-                (s for s in uav.sensors if s.sensor_type == "camera"),
+                (s for s in uav.sensors if s.sensor_type == "camera_uav"),
                 None,
             )
             if cam is not None:
@@ -47,6 +45,17 @@ class UAVFleetDT:
     def sensor_step(self):
         for uav in self.uavs:
             uav.sensor_step()
+
+    def add_uav(self, robot):
+        if robot not in self._all_uavs:
+            self._all_uavs.append(robot)
+
+    def remove_uav(self, robot):
+        if robot in self._all_uavs:
+            self._all_uavs.remove(robot)
+        else:
+            print(f"[UAV Fleet] Robot: {robot.id} not in list, wanted to remove")
+
 
     @property
     def uavs(self) -> list[UGVTwin]:

@@ -158,9 +158,13 @@ class CBFQPController:
         )
         if abs(desired_omega) < self.angle_tolerance:
             desired_omega = 0.0
-
-        x0 = np.array([min(float(robot.vel_max[0, 0]), 0.5), 0.0], dtype=float)
+        v_nom = np.linalg.norm(u_nom_xy)
+        x0 = np.array([min(float(robot.vel_max[0, 0]), v_nom), desired_omega], dtype=float)
         x0 = np.clip(x0, lower, upper)
+
+        # If the nominal velocity wants the robot to stop, stop completely!
+        if v_nom < 1e-4 and abs(desired_omega) < 1e-4:
+            return np.zeros(2, dtype=float)
 
         if not cbf_lhs_rows:
             return x0

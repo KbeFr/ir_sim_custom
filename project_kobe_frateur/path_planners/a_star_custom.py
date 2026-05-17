@@ -29,7 +29,7 @@ from irsim.world.map import EnvGridMap
 from irsim.world.robots.ugv_twin import UGVTwin
 
 
-class AStarPlanner:
+class AStarPlannerCustom:
     def __init__(self, env_map: EnvGridMap  ) -> None:
         """
         Initialize A* planner.

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project_kobe"
+version = "0.1.0"
+description = "Hierachical digital twin framework extention, interfaces with irsim project."
+requires-python = ">=3.10"
+dependencies = [
+'pyqt6',
+'cvxpy'
+]
+[tool.setuptools]
+py-modules = ["simulation_gui"]
+
+[tool.setuptools.packages.find]
+include = ["local_controllers*", "loggers*", "path_planners*", "world_generator*", "overarching_twin*"]
+exclude = ["experiments*"]
+

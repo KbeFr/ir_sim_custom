@@ -1,0 +1,13 @@
+{
+    "ugv_id": 1,
+    "label": 1,
+    "total_time_s": 61.2,
+    "total_steps": 613,
+    "path_length_m": 46.549,
+    "mean_speed_m_s": 0.759,
+    "mean_squared_jerk": 21.3045,
+    "energy_consumed_pct": 61.2,
+    "final_battery_pct": 38.7,
+    "uncertainty_integral": 30.548,
+    "pct_steps_in_coverage": 64.6
+}

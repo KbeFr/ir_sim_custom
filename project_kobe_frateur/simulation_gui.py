@@ -19,16 +19,17 @@ import sys
 
 import matplotlib
 import numpy as np
+from matplotlib.widgets import PolygonSelector
 
 matplotlib.use("QtAgg")  # Must be set before any plt/irsim import
 import matplotlib.pyplot as plt
+from local_controllers.c3bf_qp import CollisionConeCBFController
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Polygon
-from overarching_twin.mission import MissionPosture
-from overarching_twin.mission_planner import Mission, MissionType
+from overarching_twin.mission import POSTURE_WEIGHTS, MissionPosture , Mission ,MissionType
 from overarching_twin.overarching_twin import PerceptionMode
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QFont
@@ -36,6 +37,8 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -59,26 +62,27 @@ from PyQt6.QtWidgets import (
 )
 from shapely import Point
 
-plt.rc('axes', labelsize=15)    # Font size of the x and y axis labels ("x [m]", "y [m]")
-plt.rc('xtick', labelsize=13)   # Font size of the x-axis tick numbers
-plt.rc('ytick', labelsize=13)   # Font size of the y-axis tick numbers
+from irsim.world.robots.uav_twin import UAVTwin
+from irsim.world.robots.ugv_twin import UGVTwin
+
+plt.rc('axes', labelsize=17)    # Font size of the x and y axis labels ("x [m]", "y [m]")
+plt.rc('xtick', labelsize=15)   # Font size of the x-axis tick numbers
+plt.rc('ytick', labelsize=15)   # Font size of the y-axis tick numbers
 plt.rc('font', size=13)         # General default font size
 plt.rc('axes', titlesize=16)     # Font size for the title above the axes
-
+plt.rc('legend', fontsize=12)   # Global font size for all legends
 
 class SimulationGUI(QMainWindow):
     """Main window: matplotlib canvas (left) + tabbed control panel (right)."""
 
-    def __init__(self, env, adt, ugv_twins, controllers, uav_twins,
-                 max_steps=800, step_ms=100, perception_mode="ugv"):
+    def __init__(self, env, adt, controllers,
+                 max_steps=800, step_ms=100, perception_mode="ALL"):
         super().__init__()
 
         # ── Core references ────────────────────────────────────────────────
         self.env = env
         self.adt = adt
-        self.ugv_twins = ugv_twins
         self.controllers = controllers
-        self.uav_twins = uav_twins
         self.max_steps = max_steps
         self.perception_mode = perception_mode
 
@@ -96,11 +100,11 @@ class SimulationGUI(QMainWindow):
         self._map_ax = self._map_fig.add_subplot(111)
         self._perception_artists = []  # matplotlib patches drawn over sim canvas
 
-        # Saving runs 
+        # Saving runs
         self._saved_runs = {}  # key: unique label → {rid, xs, ys, artist}
-        self._ugv_traces = {ugv.id: ([], []) for ugv in self.ugv_twins}
+        self._ugv_traces = {ugv.id: ([], []) for ugv in self.adt.all_ugvs}
         self._saved_artists = {}
-        self._run_colors = ['lime', 'cyan', 'magenta', 'yellow', 'red', 'white']
+        self._run_colors = ['lime','red', 'cyan', 'magenta', 'yellow', 'white']
 
         self._last_robot_status = {}
 
@@ -182,12 +186,12 @@ class SimulationGUI(QMainWindow):
         btn_reset.clicked.connect(self._reset_sim)
         bar.addWidget(btn_reset)
 
-        self.lbl_step = QLabel(f"Step: 0 / {self.max_steps}")
+        self.lbl_step = QLabel("Step: 0")
         self.lbl_step.setMinimumWidth(130)
 
         spd_lbl = QLabel("Speed:")
         self.sld_speed = QSlider(Qt.Orientation.Horizontal)
-        self.sld_speed.setRange(1, 30)
+        self.sld_speed.setRange(1, 50)
         self.sld_speed.setValue(10)
         self.sld_speed.setMaximumWidth(140)
         self.sld_speed.valueChanged.connect(self._on_speed_changed)
@@ -533,8 +537,13 @@ class SimulationGUI(QMainWindow):
     # ══════════════════════════════════════════════════════════════════════
 
     def _on_canvas_click(self, event):
-        if event.inaxes is None or event.button != 1:
+        if event.inaxes is None or event.button != 3:
             return
+
+        #For the polySelector tool
+        if hasattr(self, 'poly_selector') and self.poly_selector.active:
+            return
+
         mx, my = event.xdata, event.ydata
 
         click_point = Point(mx, my)
@@ -552,30 +561,175 @@ class SimulationGUI(QMainWindow):
             if dist < best:
                 best, hit = dist, obj
 
-        if hit is None:
+        if hit:
+            # Build context menu at cursor For object hit
+            menu = QMenu(self)
+            title = QAction(f"{type(hit).__name__}  id={hit.id}", self)
+            title.setEnabled(False)
+            menu.addAction(title)
+            menu.addSeparator()
+            menu.addAction("🗑  Delete", lambda: self._delete_by_obj(hit))
+            menu.addAction("👁  Toggle visible", lambda: self._toggle_visible_by_obj(hit))
+            menu.addAction("🚫 Toggle UAV Fault", lambda: self._fault_inject_uav(hit))
+            menu.exec(self.canvas.mapToGlobal(
+                self.canvas.mapFromGlobal(
+                    self.canvas.cursor().pos()
+                )
+            ))
+        else:
+            # Build context menu for Empty Space
+            menu = QMenu(self)
+            title = QAction(f"📍 Location: ({mx:.2f}, {my:.2f})", self)
+            title.setEnabled(False)
+            menu.addAction(title)
+            menu.addSeparator()
+
+            # Submenu: Add Object
+            add_menu = menu.addMenu("➕ Add Object...")
+            add_menu.addAction("⚪ Add Circle", lambda: self._dialog_spawn(mx, my, "circle"))
+            add_menu.addAction("🧱 Add Rectangle", lambda: self._dialog_spawn(mx, my, "rectangle"))
+            add_menu.addSeparator()
+            add_menu.addAction("🤖 Add Robot", lambda: self._dialog_spawn(mx, my, "robot"))
+
+            menu.addSeparator()
+
+            # Interactive drawing mode
+            menu.addAction("✏️ Draw Custom Polygon", lambda: self._activate_polygon_mode())
+
+            menu.exec(self.canvas.mapToGlobal(self.canvas.mapFromGlobal(self.canvas.cursor().pos())))
+
+    def _dialog_spawn(self, mx, my, spawn_type):
+        """Opens the custom dialog and spawns the object if accepted."""
+        dialog = ObjectSpawnDialog(spawn_type, self)
+        if not dialog.exec():
+            return  # User canceled
+
+        vals = dialog.get_values()
+
+        try:
+            if spawn_type in ["circle", "rectangle"]:
+                # Shape dict directly maps to GeometryFactory requirements
+                shape_dict = {"name": spawn_type}
+                shape_dict.update({k: v for k, v in vals.items() if k != "theta"})
+                theta = vals.get("theta", 0.0)
+
+                obs = self.env.object_factory.create_obstacle(
+                    shape=shape_dict, 
+                    state=[mx, my, theta],
+                    name=f"obs_{spawn_type}_{int(mx)}_{int(my)}"
+                )
+
+                self._add_by_obj(obs)
+
+            elif spawn_type == "robot":
+                # Create the robot
+                robot = self.env.object_factory.create_robot(
+                    type=vals["type"],
+                    kinematics={"name": vals["kin"]},
+                    state=[mx, my, vals["theta"]],
+                    goal=[mx + 5.0, my + 5.0, 0.0],  # Default goal slightly ahead
+                    name=vals["name"],
+                )
+
+                self._add_by_obj(robot)
+
+
+        except Exception as e:
+            self._log(f"❌ [Spawn Error] {e}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Interactive Drawing (PolygonSelector)
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _activate_polygon_mode(self):
+        """Activates the interactive polygon drawing tool."""
+        self.poly_selector = PolygonSelector(
+            self.env._env_plot.ax,
+            self._on_polygon_complete,
+            useblit=True
+        )
+        self._log("✏️ Polygon mode active: Click to add corners. Press 'Enter' to finish, or 'Esc' to cancel.")
+
+    def _on_polygon_complete(self, vertices):
+        """Callback triggered when the user presses 'Enter' after drawing."""
+        if len(vertices) < 3:
+            self._log("⚠️ A polygon needs at least 3 points! Canceled.")
+            self.poly_selector.set_active(False)
             return
 
-        # Build context menu at cursor
-        menu = QMenu(self)
-        title = QAction(f"{type(hit).__name__}  id={hit.id}", self)
-        title.setEnabled(False)
-        menu.addAction(title)
-        menu.addSeparator()
-        menu.addAction("🗑  Delete", lambda: self._delete_by_obj(hit))
-        menu.addAction("👁  Toggle visible", lambda: self._toggle_visible_by_obj(hit))
-        menu.addAction("🚫 Toggle UAV Fault", lambda: self._fault_inject_uav(hit))
-        menu.exec(self.canvas.mapToGlobal(
-            self.canvas.mapFromGlobal(
-                self.canvas.cursor().pos()
+        verts_array = np.array(vertices)
+
+        # Calculate the centroid (the physical x, y center of the object)
+        cx = np.mean(verts_array[:, 0])
+        cy = np.mean(verts_array[:, 1])
+
+        # Convert to local coordinates (ir-sim expects vertices relative to center)
+        local_vertices = verts_array - [cx, cy]
+
+        shape_dict = {
+            "name": "polygon",
+            "vertices": local_vertices.tolist()
+        }
+        try:
+            # Spawn the object
+            obs = self.env.object_factory.create_obstacle(
+                shape=shape_dict,
+                state=[cx, cy, 0.0],
+                name=f"poly_obs_{int(cx)}_{int(cy)}"
             )
-        ))
+            self._add_by_obj(obs)
+
+            self._log(f"📐 Custom polygon spawned at ({cx:.1f}, {cy:.1f})")
+
+        except Exception as e:
+            self._log(f"❌ [Spawn Error] {e}")
+
+        # Deactivate and remove the drawing tool from the canvas
+        self.poly_selector.set_active(False)
+        self.poly_selector.disconnect_events()
+        self.canvas.draw_idle()
+
+    def _add_by_obj(self,obj):
+        self.env.add_object(obj)
+
+        if getattr(obj, 'role', None) == "robot":
+            if isinstance(obj, UGVTwin):
+                self.adt.add_ugv(obj)
+                if self.controllers:
+                    self.controllers[obj.id] = CollisionConeCBFController(
+                        robot_type=obj.kinematics, safety_margin=0.05, goal_gain=0.8
+                    )
+            elif isinstance(obj, UAVTwin):
+                self.adt.uav_fleet.add_uav(obj)
+            else:
+                print("Regular robot type not supported yet")
+                return
+
+            self._visibility_objects[obj.id] = True
+
+            # Update the side panel GUI
+            self._refresh_robot_panel(obj, add=True)
+            self._refresh_delete_combo()
+        else:
+            self.adt.add_perceived_obstacle(obj)
+            self._visibility_objects[obj.id] = True
+
+        self._log(f"🚀 Spawnd {obj.type} '{obj.name}' at ({float(obj.state.flat[0]):.2f}, {float(obj.state.flat[1]):.2f})")
+
+        self._draw_perception_highlights()
+        self.canvas.draw_idle()
+
 
     def _delete_by_obj(self, obj):
-        # Select it in combo then reuse _delete_robot
-        idx = self.act_combo.findData(obj.id)
-        if idx >= 0:
-            self.act_combo.setCurrentIndex(idx)
-        self._delete_robot()
+        if getattr(obj, 'role', None) == "robot":
+            # Select it in combo then reuse _delete_robot
+            idx = self.act_combo.findData(obj.id)
+            if idx >= 0:
+                self.act_combo.setCurrentIndex(idx)
+            self._delete_robot()
+        else:
+            self._delete_obstacle(obj)
+
 
     def _toggle_visible_by_obj(self, obj):
 
@@ -586,7 +740,7 @@ class SimulationGUI(QMainWindow):
         new_state = not self._visibility_objects.get(obj.id)
         self._visibility_objects[obj.id] = new_state
 
-        # For the robot toggles on the side 
+        # For the robot toggles on the side
         if getattr(obj, 'role', None) == "robot":
             self._visibility_robots[obj.id] = new_state
             chk = self._robot_checks.get(obj.id)
@@ -605,13 +759,13 @@ class SimulationGUI(QMainWindow):
         # Set object unobstructed
         obj.unobstructed = not new_state
 
-        # Update perceived obstacles in adt 
+        # Update perceived obstacles in adt
         if new_state:
             self.adt.add_perceived_obstacle(obj)
             self._log(f"Unhiding obj id={obj.id} (unobstructed)")
 
         else:
-            self.adt.remove_perceived_obstacles(obj)
+            self.adt.remove_perceived_obstacle(obj)
             self._log(f"Hiding obj id={obj.id} (unobstructed)")
 
         # force redraw
@@ -654,48 +808,55 @@ class SimulationGUI(QMainWindow):
             return  # Safety catch
 
         # Open the Save Dialog
-        file_path, selected_filter = QFileDialog.getSaveFileName(
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
             None,
             "Export Current View",
             default_name,
             "Vector PDF (*.pdf);;High-Res PNG (*.png)"
         )
 
-        # Ask the user for a custom title before opening the save dialog
-        custom_title, ok_title = QInputDialog.getText(
-            self,
-            "Figure Title",
-            "Enter a title for the figure (leave blank for no title):"
-        )
+        if not file_path:
+            return # User canceled file dialog
 
-        # If the user clicks 'Cancel' on the title prompt, abort the export
-        if not ok_title:
-            return
+        # Open our Custom Dialog for settings
+        dialog = ExportSettingsDialog(self)
+        if not dialog.exec():
+            return  # User clicked 'Cancel' on the settings prompt
 
-        # Save the file if the user didn't cancel
-        if file_path:
-            # Apply the Super Title if the user typed one
-            if custom_title.strip():
-                fig_to_save.suptitle(custom_title.strip(), fontsize=18, fontweight='bold')
-                # Adjust layout slightly so the suptitle doesn't overlap the normal title
-                fig_to_save.tight_layout()
-            # Save the figure
-            if file_path.endswith('.png'):
-                # PNG is a raster format, so it needs the high DPI multiplier
-                fig_to_save.savefig(file_path, dpi=300, bbox_inches='tight')
-            else:
-                # PDF is a vector format. DPI doesn't matter for the drawn lines/shapes!
-                fig_to_save.savefig(file_path, bbox_inches='tight')
-            print(f"Successfully exported to: {file_path}")
-            # Remove the title from the live GUI after exporting
-            if custom_title.strip():
-                fig_to_save.suptitle("") # Clear the text
-                fig_to_save.tight_layout() # Restore normal layout
-                # Force the canvas to redraw without the title
-                if current_tab == 0 and hasattr(self, 'canvas'):
-                    self.canvas.draw_idle()
-                elif current_tab == 1 and hasattr(self, 'map_canvas'):
-                    self.map_canvas.draw_idle()
+        # Extract the user's choices
+        custom_title, _keep_ax_title = dialog.get_values()
+
+        # Apply the Super Title if the user typed one
+        if custom_title.strip():
+            fig_to_save.suptitle(custom_title.strip(), fontsize=18, fontweight='bold')
+
+        # Hide existing axis titles if the user unchecked the box
+        original_ax_titles = []
+        if not _keep_ax_title:
+            # Iterate through all axes in the figure (safely handles subplots)
+            for ax in fig_to_save.axes:
+                original_ax_titles.append((ax, ax.get_title()))
+                ax.set_title("") # Clear it temporarily
+
+        # Adjust layout before saving to account for text additions/removals
+        fig_to_save.tight_layout()
+
+        if file_path.endswith('.png'):
+            # PNG is a raster format, so it needs the high DPI multiplier
+            fig_to_save.savefig(file_path, dpi=300, bbox_inches='tight')
+        else:
+            # PDF is a vector format. DPI doesn't matter for the drawn lines/shapes!
+            fig_to_save.savefig(file_path, bbox_inches='tight')
+
+        print(f"Successfully exported to: {file_path}")
+
+
+        # Remove the custom super title from the live GUI
+        if custom_title.strip():
+            fig_to_save.suptitle("") # Clear the text
+
+        # Restore normal layout
+        fig_to_save.tight_layout()
 
         # Hard sync the canvas to prevent the Qt event loop from hanging
         if current_tab == 0 and hasattr(self, 'canvas'):
@@ -719,6 +880,60 @@ class SimulationGUI(QMainWindow):
         if robot:
             chk = self._robot_checks.get(robot.id)
             if chk: chk.setChecked(not chk.isChecked())
+
+    def _update_robot_arrived(self, ugv):
+        """Handle mission completion and reset UGV state for the next mission."""
+
+        #Update gui arrived status
+        self._last_robot_status[ugv.id] = True
+        lbl = self._robot_status_labels.get(ugv.id)
+        if lbl is not None:
+                    lbl.setText("✅ arrived")
+                    lbl.setStyleSheet(
+                        "color: green; font-size: 9px;"
+                    )
+
+        mission = getattr(ugv, 'assigned_mission', None)
+
+        if mission is not None:
+            #  Mark the mission as complete so the planner knows it's done
+            mission.status = "complete"
+            self._log(f"✅ Mission '{mission.mission_id}' completed by UGV {ugv.id}!")
+
+            # Free the UGV from the overarching twin's perspective
+            ugv.assigned_mission = None
+
+        #  Nuke internal goals and stop the robot from wandering (Fallback fix)
+        ugv.set_goal(None, init=True)
+        ugv.set_velocity([0, 0])
+
+        ugv.goal_threshold = ugv.info.goal_threshold
+
+        #  Refresh the Mission UI panel to show the "complete" status
+        self._refresh_mission_list()
+
+    def _update_robot_status(self):
+        for robot in self.env.robot_list:
+            arrived = getattr(robot, 'arrive_flag', False)
+
+            # Check if the state has changed since the last frame
+            if self._last_robot_status.get(robot.id) != arrived:
+
+                # Update our cache
+                self._last_robot_status[robot.id] = arrived
+
+                # Perform the expensive UI update ONLY when the state flips
+                lbl = self._robot_status_labels.get(robot.id)
+                if lbl is not None:
+                    lbl.setText("✅ arrived" if arrived else "⏳ moving")
+                    lbl.setStyleSheet(
+                        "color: green; font-size: 9px;" if arrived
+                        else "color: gray; font-size: 9px;"
+                    )
+
+                # Handle the text clearing logic if it just arrived
+                if arrived:
+                    robot.set_text("")
 
     def _save_robot_run(self):
         robot = self._get_selected_robot()
@@ -811,7 +1026,7 @@ class SimulationGUI(QMainWindow):
                 line, = ax.plot(xs, ys, '--', color=color, lw=1.5,
                                 alpha=0.8, label=label, zorder=6)
                 run["artist"] = line
-                ax.legend(loc='upper right', fontsize=7, framealpha=0.5)
+                ax.legend(loc='upper right',  framealpha=0.5)
 
         self.canvas.draw_idle()
 
@@ -825,7 +1040,7 @@ class SimulationGUI(QMainWindow):
         self.btn_play.setText("▶  Play")
         self._step = 0
         self._use_global_plan = False
-        self.lbl_step.setText(f"Step: 0 / {self.max_steps}")
+        self.lbl_step.setText("Step: 0")
 
         # Clear per-frame artists
         for a in self._perception_artists:
@@ -836,16 +1051,18 @@ class SimulationGUI(QMainWindow):
         self._perception_artists.clear()
 
         # Reset UGV position tracking
-        self._ugv_traces = {ugv.id: ([], []) for ugv in self.ugv_twins}
-
-
-        # Reset other components 
-        self.env.reset()
-        self.adt.reset()
-
+        self._ugv_traces = {ugv.id: ([], []) for ugv in self.adt.all_ugvs}
+        
         for robot in self.env.robot_list:
             robot.set_text(None) # Restore original name
             robot.goal_threshold = robot.info.goal_threshold # Restore original threshold
+            if robot.info.goal is not None:
+                robot.set_goal(robot.info.goal, init=True)
+
+        # Reset other components
+        self.env.reset()
+        self.adt.reset()
+
 
         self.canvas.draw_idle()
         self._log("⏮ Simulation reset.")
@@ -855,12 +1072,6 @@ class SimulationGUI(QMainWindow):
     # ══════════════════════════════════════════════════════════════════════
 
     def _sim_step(self):
-        if self._step >= self.max_steps:
-            self.timer.stop()
-            self.btn_play.setChecked(False)
-            self.btn_play.setText("▶  Play")
-            self._log("✅ Simulation complete.")
-            return
 
         # 1. OverArchingTwin tick
         self.adt.step()
@@ -868,14 +1079,22 @@ class SimulationGUI(QMainWindow):
 
         # 2. Local controllers → actions
         actions, ids = [], []
-        for ugv in self.ugv_twins:
-            # Also use this for arrived status check
-            arrived = getattr(ugv, 'arrive_flag', False)
-            if arrived:
-                self._update_robot_arrived(ugv)
+        for ugv in self.adt.ugvs:
 
             if self._use_global_plan and ugv.assigned_mission is None:
                 continue
+
+            waypoints_remaining = len(ugv._goal) if ugv._goal else 0
+            if waypoints_remaining <= 1:
+                ugv.goal_threshold = 0.1
+
+            if ugv.arrive_flag:
+                self.timer.stop()
+                self.btn_play.setChecked(False)
+                self.btn_play.setText("▶  Play")
+                self._log(f"🏁 Robot {ugv.id} at step {self._step}")
+                self._update_robot_arrived(ugv)
+
             obstacles = ugv.get_ugv_view()
             action = self.controllers[ugv.id].get_action(ugv, obstacles)
             actions.append(action)
@@ -884,7 +1103,7 @@ class SimulationGUI(QMainWindow):
         # 3. Physics
         self.env.step(action=actions, action_id=ids)
 
-        for ugv in self.ugv_twins:
+        for ugv in self.adt.ugvs:
             xs, ys = self._ugv_traces[ugv.id]
             xs.append(float(ugv.state.flat[0]))
             ys.append(float(ugv.state.flat[1]))
@@ -900,7 +1119,8 @@ class SimulationGUI(QMainWindow):
 
         # 5. Bookkeeping
         self._step += 1
-        self.lbl_step.setText(f"Step: {self._step} / {self.max_steps}")
+        self.lbl_step.setText(f"Step: {self._step}")
+
 
         if self.env.done():
             self.timer.stop()
@@ -913,28 +1133,6 @@ class SimulationGUI(QMainWindow):
                 and self._step % max(1, self.map_refresh_spin.value()) == 0):
             self._render_map_layer()
 
-    def _update_robot_status(self):
-        for robot in self.env.robot_list:
-            arrived = getattr(robot, 'arrive_flag', False)
-
-            # Check if the state has changed since the last frame
-            if self._last_robot_status.get(robot.id) != arrived:
-
-                # Update our cache
-                self._last_robot_status[robot.id] = arrived
-
-                # Perform the expensive UI update ONLY when the state flips
-                lbl = self._robot_status_labels.get(robot.id)
-                if lbl is not None:
-                    lbl.setText("✅ arrived" if arrived else "⏳ moving")
-                    lbl.setStyleSheet(
-                        "color: green; font-size: 9px;" if arrived
-                        else "color: gray; font-size: 9px;"
-                    )
-
-                # Handle the text clearing logic if it just arrived
-                if arrived:
-                    robot.set_text("")
 
     def _env_plot_step(self, objects):
         """
@@ -1127,12 +1325,14 @@ class SimulationGUI(QMainWindow):
                 mission = next(
                     (m for m in self.adt.missions if m.mission_id == mission_id), None
                 )
-                # Get posture from this mission 
+                # Get posture from this mission
                 posture = (mission.mission_posture)
+                print(posture)
                 weights = POSTURE_WEIGHTS[posture]
+                print(weights)
 
                 # Safely find the corresponding UGV object in the OverArchingTwin
-                ugv = next((u for u in self.adt.active_ugvs if getattr(u, 'id', str(id(u))) == ugv_id), None)
+                ugv = next((u for u in self.adt.ugvs if getattr(u, 'id', str(id(u))) == ugv_id), None)
 
                 cost_img = gm.get_cost_image(
                     weights=weights,
@@ -1225,11 +1425,10 @@ class SimulationGUI(QMainWindow):
                 img_data = gm._risk.T
             elif kind == "cost":
                 mission = next((m for m in self.adt.missions if m.mission_id == mission_id), None)
-                from overarching_twin.mission import POSTURE_WEIGHTS, MissionPosture
                 posture = mission.mission_posture
 
                 weights = POSTURE_WEIGHTS[posture]
-                ugv = next((u for u in self.adt.active_ugvs if getattr(u, 'id', None) == ugv_id), None)
+                ugv = next((u for u in self.adt.ugvs if getattr(u, 'id', None) == ugv_id), None)
 
                 if ugv:
                     img_data = gm.get_cost_image(weights=weights, robot_mass=ugv.mass,
@@ -1289,7 +1488,7 @@ class SimulationGUI(QMainWindow):
             self.canvas.draw_idle()
 
     def _draw_perception_highlights(self):
-        # 1. Fast cleanup: We will now be clearing 1 Collection instead of 100s of patches
+        # Fast cleanup
         for a in self._perception_artists:
             try:
                 a.remove()
@@ -1297,14 +1496,11 @@ class SimulationGUI(QMainWindow):
                 pass
         self._perception_artists.clear()
 
-        if not getattr(self, '_show_borders', True):  # Safer attribute check
-            return
-
         ax = self.env._env_plot.ax
         gm = getattr(self.adt, 'grid_map', None)
         if gm is None: return
 
-        # 2. O(1) Lookups: Pre-compute sets outside the loop to avoid redundant calculations
+        # O(1) Lookups: Pre-compute sets outside the loop to avoid redundant calculations
         try:
             uav_obs_ids = {o.id for o in self.adt.get_uavs_view()}
         except Exception:
@@ -1315,13 +1511,13 @@ class SimulationGUI(QMainWindow):
         except Exception:
             ugv_obs_ids = set()
 
+
         fleet = getattr(self.adt, 'uav_fleet', None)
         fleet_hidden_ids = {getattr(o, 'id', o) for o in getattr(fleet, 'hidden_objects', [])}
 
-        # CRITICAL FIX: Convert list to a set of IDs for O(1) lookup speed
+        # Convert list to a set of IDs for O(1) lookup speed
         adt_perceived = getattr(self.adt, 'perceived_obstacles', [])
         adt_perceived_ids = {getattr(o, 'id', id(o)) for o in adt_perceived}
-
         # Prepare lists for the PatchCollection
         patches = []
         facecolors = []
@@ -1336,6 +1532,7 @@ class SimulationGUI(QMainWindow):
             in_uav = obj_id in uav_obs_ids
             in_ugv = obj_id in ugv_obs_ids
             in_adt = obj_id in adt_perceived_ids
+
 
             is_fleet_hidden = obj_id in fleet_hidden_ids
             is_gui_hidden = not self._visibility_objects.get(obj_id, True)
@@ -1352,17 +1549,19 @@ class SimulationGUI(QMainWindow):
             # STYLING RULES
             # ==========================================
             if is_gui_hidden:
-                color, lw, facecolor, alpha, ls = '#888888', 1.5, '#DDDDDD', 0.2, ':'
+                color, lw, facecolor, alpha, ls = "#A3A0A0", 1.5, "#9F9A9A", 0.2, ':'
             elif is_fleet_hidden:
-                color, lw, facecolor, alpha, ls = 'red', 2.5, 'red', 0.4, '-.'
-            elif in_uav and in_ugv:
-                color, lw, facecolor, alpha, ls = 'white', 2.0, 'none', 1.0, '--'
-            elif in_uav:
-                color, lw, facecolor, alpha, ls = 'cyan', 2.5, 'none', 1.0, '--'
-            elif in_ugv:
-                color, lw, facecolor, alpha, ls = 'orange', 2.5, 'none', 1.0, '--'
-            elif in_adt:
-                color, lw, facecolor, alpha, ls = 'yellow', 2.0, 'none', 1.0, '--'
+                color, lw, facecolor, alpha, ls = 'red', 2.0, 'red', 0.4, '-.'
+
+            elif self._show_borders:
+                if in_uav and in_ugv:
+                    color, lw, facecolor, alpha, ls = 'white', 1.5, 'none', 1.0, '--'
+                elif in_uav:
+                    color, lw, facecolor, alpha, ls = 'cyan', 2.0, 'none', 1.0, '--'
+                elif in_ugv:
+                    color, lw, facecolor, alpha, ls = 'orange', 2.0, 'none', 1.0, '--'
+                elif in_adt:
+                    color, lw, facecolor, alpha, ls = 'yellow', 1.5, 'none', 1.0, '--'
             else:
                 continue
 
@@ -1396,7 +1595,7 @@ class SimulationGUI(QMainWindow):
             linewidths.append(lw)
             linestyles.append(ls)
 
-        # 3. Batch Render: Draw everything at once via PatchCollection
+        # Batch Render: Draw everything at once via PatchCollection
         if patches:
             collection = PatchCollection(
                 patches,
@@ -1409,8 +1608,9 @@ class SimulationGUI(QMainWindow):
             )
             ax.add_collection(collection)
             self._perception_artists.append(
-                collection)  # ══════════════════════════════════════════════════════════════════════
+                collection) 
 
+    # ══════════════════════════════════════════════════════════════════════
     # Robot spawn / delete
     # ══════════════════════════════════════════════════════════════════════
 
@@ -1449,15 +1649,14 @@ class SimulationGUI(QMainWindow):
             from irsim.world.robots.ugv_twin import UGVTwin
 
             if isinstance(robot, UGVTwin):
-                self.ugv_twins.append(robot)
+                self.adt.add_ugv(robot)
                 # Add a default controller (same type as first UGV if available)
-                if self.controllers and self.ugv_twins:
-                    from local_controllers.c3bf_qp import CollisionConeCBFController
+                if self.controllers:
                     self.controllers[robot.id] = CollisionConeCBFController(
                         robot_type=robot.kinematics, safety_margin=0.05, goal_gain=0.8
                     )
             elif isinstance(robot, UAVTwin):
-                self.uav_twins.append(robot)
+                self.adt.uav_fleet.add_uav(robot)
 
             self._refresh_robot_panel(robot, add=True)
             self._refresh_delete_combo()
@@ -1482,13 +1681,11 @@ class SimulationGUI(QMainWindow):
             return
 
         rid = robot.id
-        print("deletecalled")
+
         # env.delete_object handles plot_clear + _objects removal + build_tree
         self.env.delete_object(rid)
-
-        self.env.delete_object(rid)
-        self.ugv_twins = [r for r in self.ugv_twins if r.id != rid]
-        self.uav_twins = [r for r in self.uav_twins if r.id != rid]
+        self.adt.remove_ugv(robot)
+        self.adt.uav_fleet.remove_uav(robot)
         self.controllers.pop(rid, None)
         self._visibility_robots.pop(rid, None)
 
@@ -1507,6 +1704,18 @@ class SimulationGUI(QMainWindow):
         self._draw_perception_highlights()
         self.canvas.draw_idle()
         self._log(f"🗑 Deleted robot id={rid}")
+
+
+    def _delete_obstacle(self, obs):
+        self._visibility_objects.pop(obs.id)
+        self.adt.remove_perceived_obstacle(obs)
+        self.env.delete_object(obs.id)
+
+        self._draw_perception_highlights()
+        self.canvas.draw_idle()
+        self._log(f"🗑 Deleted object id={obs.id}")
+
+
 
     def _refresh_robot_panel(self, robot, add: bool):
         """Add or remove a robot's checkbox in the Visibility tab scroll area."""
@@ -1590,30 +1799,8 @@ class SimulationGUI(QMainWindow):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Public entry point
+# Custom Classes
 # ══════════════════════════════════════════════════════════════════════════════
-
-def launch(env, adt, ugv_twins, controllers, uav_twins,
-           max_steps: int = 800, step_ms: int = 100,
-           perception_mode: str = "ugv"):
-    """
-    Drop-in replacement for the manual for-loop in custom_world.py.
-    Blocks until the Qt window is closed, then returns so post-run
-    logging (mission_logger, metric_logger) can execute normally.
-    """
-    app = QApplication.instance() or QApplication(sys.argv)
-    gui = SimulationGUI(
-        env=env,
-        adt=adt,
-        ugv_twins=ugv_twins,
-        controllers=controllers,
-        uav_twins=uav_twins,
-        max_steps=max_steps,
-        step_ms=step_ms,
-        perception_mode=perception_mode,
-    )
-    gui.show()
-    app.exec()  # blocks here; returns when window is closed
 
 
 class CustomNavigationToolbar(NavigationToolbar2QT):
@@ -1641,3 +1828,116 @@ class CustomNavigationToolbar(NavigationToolbar2QT):
         else:
             # Fallback to default Matplotlib save dialog if no callback was provided
             super().save_figure(*args)
+
+class ExportSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Export Settings")
+
+        layout = QVBoxLayout(self)
+
+        # 1. Custom Super Title Input
+        layout.addWidget(QLabel("Enter a title for the figure (leave blank for no title):"))
+        self.title_input = QLineEdit(self)
+        layout.addWidget(self.title_input)
+
+        # Checkbox to toggle the existing axis title
+        self.show_ax_title_cb = QCheckBox("Include simulation time/status title", self)
+        self.show_ax_title_cb.setChecked(True)  # Default to keeping it
+        layout.addWidget(self.show_ax_title_cb)
+
+        # Ok / Cancel Buttons (PyQt6 Strict Enum Syntax)
+        buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        self.button_box = QDialogButtonBox(buttons, self)
+
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+    def get_values(self):
+        """Returns a tuple: (custom_title_text, keep_axis_title_boolean)"""
+        return self.title_input.text(), self.show_ax_title_cb.isChecked()
+    
+class ObjectSpawnDialog(QDialog):
+    """A flexible dialog for spawning circles, rectangles, or robots."""
+    def __init__(self, spawn_type, parent=None):
+        super().__init__(parent)
+        self.spawn_type = spawn_type
+        self.setWindowTitle(f"Spawn {spawn_type.capitalize()}")
+        
+        self.layout = QFormLayout(self)
+        self.inputs = {}
+
+        if spawn_type == "circle":
+            self._add_spinbox("Radius [m]:", "radius", 1.0, 0.1, 20.0, 0.1)
+        
+        elif spawn_type == "rectangle":
+            self._add_spinbox("Length (X) [m]:", "length", 2.0, 0.1, 50.0, 0.5)
+            self._add_spinbox("Width (Y) [m]:", "width", 2.0, 0.1, 50.0, 0.5)
+            self._add_spinbox("Orientation θ [rad]:", "theta", 0.0, -3.15, 3.15, 0.1)
+            
+        elif spawn_type == "robot":
+            # Name
+            self.inputs["name"] = QLineEdit(f"robot_{np.random.randint(100,999)}")
+            self.layout.addRow("Name:", self.inputs["name"])
+            # Type
+            self.inputs["type"] = QComboBox()
+            self.inputs["type"].addItems(["ugv", "uav", "robot"])
+            self.layout.addRow("Type:", self.inputs["type"])
+            # Kinematics
+            self.inputs["kin"] = QComboBox()
+            self.inputs["kin"].addItems(["diff", "omni", "acker"])
+            self.layout.addRow("Kinematics:", self.inputs["kin"])
+            # Orientation
+            self._add_spinbox("Orientation θ [rad]:", "theta", 0.0, -3.15, 3.15, 0.1)
+
+        # Ok / Cancel Buttons
+        buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        self.button_box = QDialogButtonBox(buttons, self)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        self.layout.addWidget(self.button_box)
+
+    def _add_spinbox(self, label, key, default, min_v, max_v, step):
+        spin = QDoubleSpinBox()
+        spin.setRange(min_v, max_v)
+        spin.setValue(default)
+        spin.setSingleStep(step)
+        self.inputs[key] = spin
+        self.layout.addRow(label, spin)
+
+    def get_values(self):
+        """Returns a dict of all inputted values."""
+        vals = {}
+        for k, widget in self.inputs.items():
+            if isinstance(widget, QDoubleSpinBox):
+                vals[k] = widget.value()
+            elif isinstance(widget, QComboBox):
+                vals[k] = widget.currentText()
+            elif isinstance(widget, QLineEdit):
+                vals[k] = widget.text().strip()
+        return vals
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Public entry point
+# ══════════════════════════════════════════════════════════════════════════════
+
+def launch(env, adt, controllers,
+           max_steps: int = 800, step_ms: int = 100,
+           perception_mode: str = "ugv"):
+    """
+    Drop-in replacement for the manual for-loop in custom_world.py.
+    Blocks until the Qt window is closed, then returns so post-run
+    logging (mission_logger, metric_logger) can execute normally.
+    """
+    app = QApplication.instance() or QApplication(sys.argv)
+    gui = SimulationGUI(
+        env=env,
+        adt=adt,
+        controllers=controllers,
+        max_steps=max_steps,
+        step_ms=step_ms,
+        perception_mode=perception_mode,
+    )
+    gui.show()
+    app.exec()  # blocks here; returns when window is closed
